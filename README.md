@@ -156,8 +156,7 @@ target_link_libraries(your_target ison::ison_graph)
 ### C# (.NET 8)
 
 ```bash
-# NuGet package coming soon - until then, reference from source:
-dotnet add reference path/to/isongraph/ison-graph-cs/src/IsonGraph/IsonGraph.csproj
+dotnet add package IsonGraph
 ```
 
 ---
