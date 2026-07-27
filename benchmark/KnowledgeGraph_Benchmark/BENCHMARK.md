@@ -14,11 +14,11 @@
 
 ## Executive Summary
 
-ISONGraph demonstrates superior performance across all key metrics:
+ISONGraph leads the 10-format field on combined efficiency:
 
-- **Highest Accuracy:** 90% (vs. 89% for second-best Cypher)
-- **Best Token Efficiency:** 68.6% savings vs JSON
-- **Best Overall Efficiency:** 53.00 Acc/1K tokens (19% better than next)
+- **Best Overall Efficiency:** 53.00 Acc/1K tokens (19% better than next). This is the headline result.
+- **Token Efficiency:** 1,698 tokens total. That is 68.6% smaller than pretty-printed JSON (`indent=2`) and **41.3% smaller than minified JSON**, the strongest JSON baseline. Both baselines are in the tables below.
+- **Accuracy:** 90%, the highest recorded, but see Limitations: at n=100 the top cluster (85-90%, 8 of 10 formats) is within sampling noise. The robust accuracy separation is compact formats vs the verbose tail (RDF/Turtle: 58%).
 
 ---
 
@@ -108,6 +108,25 @@ Higher is better - it measures how much accuracy you get per token spent.
 | 8 | RDF/Turtle | 13.92 | 58.0% | 4,166 | Poor LLM comprehension |
 | 9 | JSON-LD | 10.50 | 86.0% | 8,191 | Very verbose |
 | 10 | GraphML | 9.57 | 87.0% | 9,093 | XML overhead kills efficiency |
+
+---
+
+
+## Methodology Notes & Limitations
+
+These results were independently reproduced to the token by a third party (serialization and token counts). The following caveats apply and are stated here deliberately.
+
+**1. Isolation: no retrieval, no truncation.** Every dataset's complete graph is serialized in every format and placed fully in the prompt for every question. All formats see identical information; nothing is cut to fit a context window. Accuracy differences are therefore purely representational. In production GraphRAG a second effect stacks on top (a compact format fits more subgraph per window); that effect is real but is not what this benchmark measures.
+
+**2. Two JSON baselines.** The 68.6% headline is measured against pretty-printed JSON (`indent=2`). Nobody should ship pretty-printed JSON in a context window; against minified JSON the saving is 41.3%. We report both. Raw counts are in the tables so any baseline can be recomputed.
+
+**3. Statistical power.** Accuracy is one run, one model (DeepSeek Chat, temperature 0), 100 questions. A 3-point gap at n=100 is inside the ~±6-9pp confidence interval, so ordering within the 85-90% cluster should be treated as indicative, not proven. Token counts, by contrast, are deterministic and exactly reproducible. Multi-run accuracy and per-question logs are planned.
+
+**4. ISON vs ISONGraph.** With current `ison-py` releases, plain ISON serializes these datasets at 1,606 tokens, tighter than both the 1,976 recorded here and ISONGraph's 1,698. This is by design: ISONGraph pays a small token premium over ISON for explicit relationship primitives (typed edges, cross-references, traversal semantics). For flat or tabular data, use ISON. ISONGraph's claim is scoped to graph formats.
+
+**5. Prompt-cache behavior on mutating graphs.** ISONGraph's columnar layout is optimized for graphs that are serialized once and read many times. If you mutate a graph inside a cached prompt prefix between turns, the columnar layout invalidates more of the cached prefix than JSON does (JSON localizes a change to one object; a column header change moves every row under it). Independent measurements on a 200-node graph found appending a node invalidated ~77% of the prefix vs ~65% for compact JSON, and adding a node with a new field invalidated nearly all of it. **Guidance: pin-once, read-many reference graphs are the design case. A graph that mutates between turns inside a cached prefix is not, and plain JSON may cost you less there.**
+
+**6. Tokenizer and model specificity.** All token counts use o200k_base; all accuracy numbers come from DeepSeek Chat via API. Ratios will shift under other vocabularies (Llama, Qwen) and other models. The harness accepts any OpenAI-compatible endpoint, so local replication is straightforward and welcome.
 
 ---
 
