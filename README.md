@@ -11,19 +11,6 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-blue.svg)](https://www.typescriptlang.org/)
 [![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
 
-ISONGraph is a **multi-language property graph library** designed specifically for LLM and AI applications. It provides the most token-efficient way to represent graph data in LLM context windows while maintaining high accuracy for graph-based reasoning tasks.
-
----
-
-# ISONGraph
-
-**Token-Efficient Property Graph Store for the AI Era**
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-blue.svg)](https://www.typescriptlang.org/)
-[![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
-
 ISONGraph is a **multi-language property graph library** designed specifically for LLM and AI applications. It is the most token-efficient **graph** format in our 10-format benchmark while maintaining high accuracy for graph-based reasoning tasks. (For flat, non-graph data, its sibling format ISON is smaller still: ISONGraph spends a few extra tokens on relationship primitives, which is what you want when your data has edges.)
 
 ---
