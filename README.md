@@ -15,12 +15,6 @@ ISONGraph is a **multi-language property graph library** designed specifically f
 
 ---
 
-## Why ISONGraph?
-
-### The Problem<p align="center">
-  <img src="assets/github_logo_stretched.png" alt="ISONGraph Logo">
-</p>
-
 # ISONGraph
 
 **Token-Efficient Property Graph Store for the AI Era**
