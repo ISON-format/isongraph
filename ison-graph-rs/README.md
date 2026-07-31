@@ -101,6 +101,12 @@ let mut graph = ISONGraph::undirected("name");
 | `remove_edge(rel, src, tgt)` | Remove edge |
 | `edge_count()` | Count all edges |
 | `edge_count_of_type(type)` | Count edges of type |
+
+ISONGraph is a **simple graph**: `add_edge` returns `Err(GraphError::DuplicateEdge)`
+on a repeated `(rel_type, source, target)` triple - parallel edges aren't
+representable, by design (it's what keeps canonical serialization
+tie-break-free). Converting from a multigraph source? Dedupe/merge in the
+converter before calling `add_edge`.
 | `edge_types()` | Get all types |
 | `edges_of_type(type)` | Iterate over edges of type |
 

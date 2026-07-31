@@ -253,6 +253,12 @@ knows_count = graph.edge_count('KNOWS')
 rel_types = graph.edge_types()  # ['KNOWS', 'WORKS_AT', ...]
 ```
 
+ISONGraph is a **simple graph**: `add_edge` raises `DuplicateEdgeError` on a
+repeated `(rel_type, source, target)` triple - parallel edges aren't
+representable, by design (it's what keeps canonical serialization
+tie-break-free). Converting from a multigraph source? Dedupe/merge in the
+converter before calling `add_edge`.
+
 ## Traversal Operations
 
 ### Neighbors (1-hop)

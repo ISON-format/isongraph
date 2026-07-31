@@ -7,8 +7,63 @@ import pytest
 from ison_graph import (
     ISONGraph, Node, Edge, Path, Direction,
     NodeNotFoundError, EdgeNotFoundError,
-    DuplicateNodeError, DuplicateEdgeError
+    DuplicateNodeError, DuplicateEdgeError,
+    InvalidIdentifierError,
 )
+
+
+# =============================================================================
+# Identifier Validation Tests
+#
+# ':' and '|' are structurally significant to the wire format ('type:id'
+# references, ISONL columns); allowing them in a node type, node id, or
+# relationship type builds a graph that throws on to_ison()/to_isonl()
+# round-trip instead of failing loudly at construction. Reproduced live
+# before this fix: add_node('a:b', '1') -> to_ison() -> from_ison() raised
+# NodeNotFoundError; add_node('rel|type', '1') -> to_isonl() -> from_isonl()
+# raised ISONSyntaxError ("expected 3 sections, got 4").
+# =============================================================================
+
+class TestIdentifierValidation:
+    @pytest.mark.parametrize("bad", ["a:b", "a|b", ":", "|"])
+    def test_add_node_rejects_bad_type(self, bad):
+        graph = ISONGraph()
+        with pytest.raises(InvalidIdentifierError):
+            graph.add_node(bad, "1")
+
+    @pytest.mark.parametrize("bad", ["a:b", "a|b"])
+    def test_add_node_rejects_bad_id(self, bad):
+        graph = ISONGraph()
+        with pytest.raises(InvalidIdentifierError):
+            graph.add_node("person", bad)
+
+    @pytest.mark.parametrize("bad", ["a:b", "a|b"])
+    def test_add_edge_rejects_bad_rel_type(self, bad):
+        graph = ISONGraph()
+        graph.add_node("person", 1)
+        graph.add_node("person", 2)
+        with pytest.raises(InvalidIdentifierError):
+            graph.add_edge(bad, ("person", 1), ("person", 2))
+
+    def test_valid_identifiers_still_allowed(self):
+        # Spaces, hyphens, unicode etc. are fine - only ':' and '|' are reserved.
+        graph = ISONGraph()
+        graph.add_node("a type", "an id-1")
+        graph.add_node("b", "2")
+        edge = graph.add_edge("shares border with", ("a type", "an id-1"), ("b", "2"))
+        assert edge.rel_type == "shares border with"
+
+    def test_no_longer_crashes_on_ison_roundtrip(self):
+        # This previously raised NodeNotFoundError on from_ison(), not at
+        # add_node() time - the actual bug this validation closes.
+        graph = ISONGraph()
+        with pytest.raises(InvalidIdentifierError):
+            graph.add_node("a:b", "1")
+
+    def test_no_longer_crashes_on_isonl_roundtrip(self):
+        graph = ISONGraph()
+        with pytest.raises(InvalidIdentifierError):
+            graph.add_node("rel|type", "1")
 
 
 # =============================================================================

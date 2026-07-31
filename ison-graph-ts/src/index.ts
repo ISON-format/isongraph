@@ -174,6 +174,20 @@ export class DuplicateEdgeError extends GraphError {
   }
 }
 
+/**
+ * Node type, node id, or relationship type contains a reserved character.
+ * ':' and '|' are structurally significant to the wire format (':' delimits
+ * `:type:id` references, '|' delimits ISONL columns); allowing them in an
+ * identifier makes the graph unparseable after a toIson()/toIsonl()
+ * round-trip instead of just failing loudly here.
+ */
+export class InvalidIdentifierError extends GraphError {
+  constructor(public readonly kind: string, public readonly value: string) {
+    super(`${kind} must not contain ':' or '|': ${JSON.stringify(value)}`);
+    this.name = "InvalidIdentifierError";
+  }
+}
+
 // =============================================================================
 // Helper Functions
 // =============================================================================
@@ -269,14 +283,32 @@ export class ISONGraph {
   // =========================================================================
 
   /**
+   * Reject ':' or '|' in a node type, node id, or relationship type. Both
+   * are structurally significant to the wire format (':' delimits
+   * `:type:id` references, '|' delimits ISONL columns); allowing them here
+   * would build a graph that throws on toIson()/toIsonl() round-trip
+   * instead of failing at construction.
+   */
+  private static _checkIdentifier(kind: string, value: string | number): void {
+    const s = String(value);
+    if (s.includes(':') || s.includes('|')) {
+      throw new InvalidIdentifierError(kind, s);
+    }
+  }
+
+  /**
    * Add a node to the graph.
    * @param nodeType Type of node (e.g., 'person', 'company')
    * @param nodeId Unique ID within the type
    * @param properties Node properties
    * @returns The created Node
+   * @throws InvalidIdentifierError if nodeType or nodeId contains ':' or '|'
    * @throws DuplicateNodeError if node already exists
    */
   addNode(nodeType: string, nodeId: number | string, properties: Properties = {}): Node {
+    ISONGraph._checkIdentifier('Node type', nodeType);
+    ISONGraph._checkIdentifier('Node id', nodeId);
+
     if (!this._nodes.has(nodeType)) {
       this._nodes.set(nodeType, new Map());
     }
@@ -392,10 +424,13 @@ export class ISONGraph {
    * @param target Target node reference [type, id]
    * @param properties Edge properties
    * @returns The created Edge
+   * @throws InvalidIdentifierError if relType contains ':' or '|'
    * @throws NodeNotFoundError if source or target doesn't exist
    * @throws DuplicateEdgeError if edge already exists
    */
   addEdge(relType: string, source: NodeRef, target: NodeRef, properties: Properties = {}): Edge {
+    ISONGraph._checkIdentifier('Relationship type', relType);
+
     // Validate nodes exist
     if (!this.hasNode(source[0], source[1])) {
       throw new NodeNotFoundError(source);

@@ -89,6 +89,12 @@ const graph = new ISONGraph(name?: string, directed?: boolean);
 | `edgeCount(relType?)` | Count edges |
 | `edgeTypes()` | Get all types |
 
+ISONGraph is a **simple graph**: `addEdge` throws `DuplicateEdgeError` on a
+repeated `(relType, source, target)` triple - parallel edges aren't
+representable, by design (it's what keeps canonical serialization
+tie-break-free). Converting from a multigraph source? Dedupe/merge in the
+converter before calling `addEdge`.
+
 #### Traversal
 
 | Method | Description |

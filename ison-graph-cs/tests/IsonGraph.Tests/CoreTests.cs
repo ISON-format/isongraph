@@ -75,6 +75,49 @@ public class NodeTests
         Assert.Throws<ArgumentException>(() => graph.AddNode("person", "1:2"));
     }
 
+    // ':' and '|' are structurally significant to the wire format
+    // ('type:id' references, ISONL columns); allowing them in a node type,
+    // node id, or relationship type builds a graph that throws on
+    // ToIson()/ToIsonl() round-trip instead of failing loudly at
+    // construction.
+    [Fact]
+    public void NodeTypeWithPipeRejected()
+    {
+        var graph = new ISONGraph();
+        var ex = Assert.Throws<ArgumentException>(() => graph.AddNode("per|son", "1"));
+        Assert.Contains("|", ex.Message);
+    }
+
+    [Fact]
+    public void NodeIdWithPipeRejected()
+    {
+        var graph = new ISONGraph();
+        Assert.Throws<ArgumentException>(() => graph.AddNode("person", "1|2"));
+    }
+
+    [Fact]
+    public void EdgeRelTypeWithColonOrPipeRejected()
+    {
+        var graph = new ISONGraph();
+        graph.AddNode("person", "1");
+        graph.AddNode("person", "2");
+        Assert.Throws<ArgumentException>(() =>
+            graph.AddEdge("KN:OWS", new("person", "1"), new("person", "2")));
+        Assert.Throws<ArgumentException>(() =>
+            graph.AddEdge("KN|OWS", new("person", "1"), new("person", "2")));
+        Assert.Equal(0, graph.EdgeCount());
+    }
+
+    [Fact]
+    public void ValidIdentifiersWithSpacesStillAllowed()
+    {
+        var graph = new ISONGraph();
+        graph.AddNode("a type", "an id-1");
+        graph.AddNode("b", "2");
+        var edge = graph.AddEdge("shares border with", new("a type", "an id-1"), new("b", "2"));
+        Assert.Equal("shares border with", edge.RelType);
+    }
+
     [Fact]
     public void RemoveNode()
     {

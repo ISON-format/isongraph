@@ -212,7 +212,7 @@ pub enum GraphError {
     #[error("Parse error: {0}")]
     ParseError(String),
 
-    #[error("Invalid identifier '{0}': ':' is not allowed in node type or id")]
+    #[error("{0}")]
     InvalidIdentifier(String),
 
     #[error("I/O error: {0}")]
@@ -237,7 +237,7 @@ pub type Result<T> = std::result::Result<T, GraphError>;
 /// - ISON/ISONL persistence
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(from = "GraphData"))]
+#[cfg_attr(feature = "serde", serde(try_from = "GraphData"))]
 pub struct ISONGraph {
     /// Graph name
     pub name: String,
@@ -279,8 +279,32 @@ struct GraphData {
 }
 
 #[cfg(feature = "serde")]
-impl From<GraphData> for ISONGraph {
-    fn from(data: GraphData) -> Self {
+impl TryFrom<GraphData> for ISONGraph {
+    type Error = GraphError;
+
+    /// Deserialization bypasses `add_node`/`add_edge` (it reconstructs the
+    /// index maps directly from untrusted JSON), so the ':' / '|'
+    /// identifier guard has to be re-applied here explicitly - otherwise a
+    /// crafted or corrupted payload could smuggle in identifiers that
+    /// `add_node`/`add_edge` would have rejected, and the graph would only
+    /// fail later, confusingly, on to_ison()/to_isonl().
+    fn try_from(data: GraphData) -> Result<Self> {
+        for (node_type, type_nodes) in &data.nodes {
+            ISONGraph::check_identifier("Node type", node_type)?;
+            for node_id in type_nodes.keys() {
+                ISONGraph::check_identifier("Node id", node_id)?;
+            }
+        }
+        for (rel_type, edges) in &data.edges {
+            ISONGraph::check_identifier("Relationship type", rel_type)?;
+            for edge in edges {
+                ISONGraph::check_identifier("Node type", &edge.source.node_type)?;
+                ISONGraph::check_identifier("Node id", &edge.source.id)?;
+                ISONGraph::check_identifier("Node type", &edge.target.node_type)?;
+                ISONGraph::check_identifier("Node id", &edge.target.id)?;
+            }
+        }
+
         let mut graph = ISONGraph {
             name: data.name,
             directed: data.directed,
@@ -291,7 +315,7 @@ impl From<GraphData> for ISONGraph {
             edge_set: HashSet::new(),
         };
         graph.rebuild_indexes();
-        graph
+        Ok(graph)
     }
 }
 
@@ -356,18 +380,29 @@ impl ISONGraph {
     ///
     /// Node keys are formed as `type:id`, so neither the type nor the id may
     /// contain `':'` (it would make keys ambiguous).
+    /// Reject ':' or '|' in a node type, node id, or relationship type. Both
+    /// are structurally significant to the wire format (':' delimits
+    /// `:type:id` references, '|' delimits ISONL columns); allowing them
+    /// here would build a graph that fails on to_ison()/to_isonl()
+    /// round-trip instead of at construction.
+    fn check_identifier(kind: &str, value: &str) -> Result<()> {
+        if value.contains(':') || value.contains('|') {
+            return Err(GraphError::InvalidIdentifier(format!(
+                "{} must not contain ':' or '|': {:?}",
+                kind, value
+            )));
+        }
+        Ok(())
+    }
+
     pub fn add_node(
         &mut self,
         node_type: &str,
         node_id: &str,
         properties: Vec<(&str, &str)>,
     ) -> Result<&Node> {
-        if node_type.contains(':') || node_id.contains(':') {
-            return Err(GraphError::InvalidIdentifier(format!(
-                "{}:{}",
-                node_type, node_id
-            )));
-        }
+        Self::check_identifier("Node type", node_type)?;
+        Self::check_identifier("Node id", node_id)?;
 
         let type_nodes = self.nodes.entry(node_type.to_string()).or_default();
 
@@ -493,6 +528,8 @@ impl ISONGraph {
         target: (&str, &str),
         properties: Vec<(&str, &str)>,
     ) -> Result<()> {
+        Self::check_identifier("Relationship type", rel_type)?;
+
         // Validate nodes exist
         if !self.has_node(source.0, source.1) {
             return Err(GraphError::NodeNotFound(
@@ -2089,6 +2126,82 @@ mod tests {
             Err(GraphError::InvalidIdentifier(_))
         ));
         assert_eq!(graph.node_count(), 0);
+    }
+
+    // ':' and '|' are structurally significant to the wire format ('type:id'
+    // references, ISONL columns); allowing them in a node type, node id, or
+    // relationship type builds a graph that fails on to_ison()/to_isonl()
+    // round-trip instead of failing loudly at construction.
+    #[test]
+    fn test_add_node_rejects_pipe() {
+        let mut graph = ISONGraph::new("test");
+        assert!(matches!(
+            graph.add_node("per|son", "1", vec![]),
+            Err(GraphError::InvalidIdentifier(_))
+        ));
+        assert!(matches!(
+            graph.add_node("person", "1|2", vec![]),
+            Err(GraphError::InvalidIdentifier(_))
+        ));
+        assert_eq!(graph.node_count(), 0);
+    }
+
+    #[test]
+    fn test_add_edge_rejects_colon_and_pipe_in_rel_type() {
+        let mut graph = ISONGraph::new("test");
+        graph.add_node("person", "1", vec![]).unwrap();
+        graph.add_node("person", "2", vec![]).unwrap();
+        assert!(matches!(
+            graph.add_edge("KN:OWS", ("person", "1"), ("person", "2"), vec![]),
+            Err(GraphError::InvalidIdentifier(_))
+        ));
+        assert!(matches!(
+            graph.add_edge("KN|OWS", ("person", "1"), ("person", "2"), vec![]),
+            Err(GraphError::InvalidIdentifier(_))
+        ));
+        assert_eq!(graph.edge_count(), 0);
+    }
+
+    #[test]
+    fn test_valid_identifiers_with_spaces_still_allowed() {
+        let mut graph = ISONGraph::new("test");
+        graph.add_node("a type", "an id-1", vec![]).unwrap();
+        graph.add_node("b", "2", vec![]).unwrap();
+        graph
+            .add_edge("shares border with", ("a type", "an id-1"), ("b", "2"), vec![])
+            .unwrap();
+        assert_eq!(graph.edge_count(), 1);
+    }
+
+    #[test]
+    fn test_no_longer_crashes_on_ison_roundtrip() {
+        // Previously: add_node("a:b", "1") succeeded, then to_ison() ->
+        // from_ison() raised NodeNotFound - the actual bug this closes.
+        let mut graph = ISONGraph::new("test");
+        assert!(graph.add_node("a:b", "1", vec![]).is_err());
+    }
+
+    #[test]
+    fn test_no_longer_crashes_on_isonl_roundtrip() {
+        let mut graph = ISONGraph::new("test");
+        assert!(graph.add_node("rel|type", "1", vec![]).is_err());
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_serde_deserialize_rejects_bad_identifiers() {
+        // Deserialization bypasses add_node/add_edge entirely (it rebuilds
+        // the index maps directly from the payload), so a crafted or
+        // corrupted JSON blob could smuggle in a ':' or '|' identifier that
+        // the public API would have rejected - verify the TryFrom impl
+        // re-applies the same guard.
+        let bad = r#"{"name":"t","directed":true,"nodes":{"a:b":{"1":{"node_type":"a:b","id":"1","properties":{}}}},"edges":{}}"#;
+        let result: std::result::Result<ISONGraph, _> = serde_json::from_str(bad);
+        assert!(result.is_err());
+
+        let good = r#"{"name":"t","directed":true,"nodes":{"a":{"1":{"node_type":"a","id":"1","properties":{}}}},"edges":{}}"#;
+        let graph: ISONGraph = serde_json::from_str(good).unwrap();
+        assert_eq!(graph.node_count(), 1);
     }
 
     #[test]

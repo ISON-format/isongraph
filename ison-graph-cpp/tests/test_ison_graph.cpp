@@ -238,6 +238,64 @@ TEST(node_type_id_with_colon_rejected) {
     assert(graph.nodeCount() == 0);
 }
 
+// ':' and '|' are structurally significant to the wire format ('type:id'
+// references, ISONL columns); allowing them in a node type, node id, or
+// relationship type builds a graph that throws on toIson()/toIsonl()
+// round-trip instead of failing loudly at construction.
+TEST(node_type_id_with_pipe_rejected) {
+    ISONGraph graph("test");
+
+    bool threw = false;
+    try {
+        graph.addNode("per|son", "1");
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    assert(threw);
+
+    threw = false;
+    try {
+        graph.addNode("person", "1|2");
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    assert(threw);
+
+    assert(graph.nodeCount() == 0);
+}
+
+TEST(edge_rel_type_with_colon_or_pipe_rejected) {
+    ISONGraph graph("test");
+    graph.addNode("person", "1");
+    graph.addNode("person", "2");
+
+    bool threw = false;
+    try {
+        graph.addEdge("KN:OWS", {"person", "1"}, {"person", "2"});
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    assert(threw);
+
+    threw = false;
+    try {
+        graph.addEdge("KN|OWS", {"person", "1"}, {"person", "2"});
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    assert(threw);
+
+    assert(graph.edgeCount() == 0);
+}
+
+TEST(valid_identifiers_with_spaces_still_allowed) {
+    ISONGraph graph("test");
+    graph.addNode("a type", "an id-1");
+    graph.addNode("b", "2");
+    Edge edge = graph.addEdge("shares border with", {"a type", "an id-1"}, {"b", "2"});
+    assert(edge.relType == "shares border with");
+}
+
 // =============================================================================
 // Traversal Tests
 // =============================================================================
@@ -889,6 +947,9 @@ int main() {
     RUN_TEST(undirected_add_edge_returns_forward_edge);
     RUN_TEST(undirected_remove_edge_removes_both_directions);
     RUN_TEST(node_type_id_with_colon_rejected);
+    RUN_TEST(node_type_id_with_pipe_rejected);
+    RUN_TEST(edge_rel_type_with_colon_or_pipe_rejected);
+    RUN_TEST(valid_identifiers_with_spaces_still_allowed);
 
     // Traversal tests
     RUN_TEST(neighbors);

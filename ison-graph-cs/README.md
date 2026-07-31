@@ -107,6 +107,12 @@ var graph = new ISONGraph("name", directed: false); // Undirected graph
 | `EdgeCount(rel?)` | Count edges |
 | `EdgeTypes()` | Get all edge types |
 
+ISONGraph is a **simple graph**: `AddEdge` throws `DuplicateEdgeError` on a
+repeated `(relType, source, target)` triple - parallel edges aren't
+representable, by design (it's what keeps canonical serialization
+tie-break-free). Converting from a multigraph source? Dedupe/merge in the
+converter before calling `AddEdge`.
+
 #### Traversal
 
 | Method | Description |

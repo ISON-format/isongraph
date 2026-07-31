@@ -231,17 +231,28 @@ public sealed partial class ISONGraph
     // =========================================================================
 
     /// <summary>
+    /// Reject ':' or '|' in a node type, node id, or relationship type. Both
+    /// are structurally significant to the wire format (':' delimits
+    /// <c>:type:id</c> references, '|' delimits ISONL columns); allowing
+    /// them here would build a graph that throws on
+    /// ToIson()/ToIsonl() round-trip instead of failing at construction.
+    /// </summary>
+    private static void CheckIdentifier(string kind, string value)
+    {
+        if (value.Contains(':') || value.Contains('|'))
+            throw new ArgumentException($"{kind} must not contain ':' or '|': '{value}'");
+    }
+
+    /// <summary>
     /// Add a node to the graph.
-    /// Throws <see cref="ArgumentException"/> if the type or id contains ':',
+    /// Throws <see cref="ArgumentException"/> if the type or id contains ':' or '|',
     /// and <see cref="DuplicateNodeError"/> if the node already exists.
     /// </summary>
     public Node AddNode(string nodeType, string nodeId,
                         IDictionary<string, string>? properties = null)
     {
-        if (nodeType.Contains(':'))
-            throw new ArgumentException($"Node type must not contain ':': '{nodeType}'");
-        if (nodeId.Contains(':'))
-            throw new ArgumentException($"Node id must not contain ':': '{nodeId}'");
+        CheckIdentifier("Node type", nodeType);
+        CheckIdentifier("Node id", nodeId);
 
         if (!_nodesByType.TryGetValue(nodeType, out var typeNodes))
         {
@@ -361,12 +372,15 @@ public sealed partial class ISONGraph
     /// <summary>
     /// Add an edge to the graph. Returns the forward edge; for undirected
     /// graphs the reverse edge is stored as well but not returned.
-    /// Throws <see cref="NodeNotFoundError"/> if either endpoint doesn't exist
+    /// Throws <see cref="ArgumentException"/> if relType contains ':' or '|',
+    /// <see cref="NodeNotFoundError"/> if either endpoint doesn't exist,
     /// and <see cref="DuplicateEdgeError"/> if the edge already exists.
     /// </summary>
     public Edge AddEdge(string relType, NodeRef source, NodeRef target,
                         IDictionary<string, string>? properties = null)
     {
+        CheckIdentifier("Relationship type", relType);
+
         if (!HasNode(source))
             throw new NodeNotFoundError(source);
         if (!HasNode(target))

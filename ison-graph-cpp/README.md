@@ -115,6 +115,12 @@ ISONGraph graph("name", false);    // Undirected graph
 | `edgeCount(type)` | Count edges of type |
 | `edgeTypes()` | Get all types |
 | `edges()` | Iterate over all edges |
+
+ISONGraph is a **simple graph**: `addEdge` throws on a repeated
+`(relType, source, target)` triple - parallel edges aren't representable,
+by design (it's what keeps canonical serialization tie-break-free).
+Converting from a multigraph source? Dedupe/merge in the converter before
+calling `addEdge`.
 | `edgesOfType(type)` | Iterate over edges of type |
 
 #### Traversal

@@ -239,17 +239,13 @@ public:
 
     /**
      * Add a node to the graph.
-     * @throws std::invalid_argument if type or id contains ':'
+     * @throws std::invalid_argument if type or id contains ':' or '|'
      * @throws DuplicateNodeError if node already exists
      */
     Node& addNode(const std::string& nodeType, const std::string& nodeId,
                   const Properties& properties = {}) {
-        if (nodeType.find(':') != std::string::npos) {
-            throw std::invalid_argument("Node type must not contain ':': '" + nodeType + "'");
-        }
-        if (nodeId.find(':') != std::string::npos) {
-            throw std::invalid_argument("Node id must not contain ':': '" + nodeId + "'");
-        }
+        checkIdentifier("Node type", nodeType);
+        checkIdentifier("Node id", nodeId);
         auto& typeNodes = nodes_[nodeType];
         if (typeNodes.find(nodeId) != typeNodes.end()) {
             throw DuplicateNodeError(NodeRef(nodeType, nodeId));
@@ -405,11 +401,14 @@ public:
      * Add an edge to the graph.
      * Returns the forward edge (source -> target) by value; for undirected
      * graphs the reverse edge is stored as well but not returned.
+     * @throws std::invalid_argument if relType contains ':' or '|'
      * @throws NodeNotFoundError if source or target doesn't exist
      * @throws DuplicateEdgeError if edge already exists
      */
     Edge addEdge(const std::string& relType, const NodeRef& source, const NodeRef& target,
                  const Properties& properties = {}) {
+        checkIdentifier("Relationship type", relType);
+
         if (!hasNode(source)) {
             throw NodeNotFoundError(source);
         }
@@ -1030,6 +1029,19 @@ public:
     // =========================================================================
 
 private:
+    /**
+     * Reject ':' or '|' in a node type, node id, or relationship type. Both
+     * are structurally significant to the wire format (':' delimits
+     * `:type:id` references, '|' delimits ISONL columns); allowing them
+     * here would build a graph that throws on toIson()/toIsonl()
+     * round-trip instead of failing at construction.
+     */
+    static void checkIdentifier(const std::string& kind, const std::string& value) {
+        if (value.find(':') != std::string::npos || value.find('|') != std::string::npos) {
+            throw std::invalid_argument(kind + " must not contain ':' or '|': '" + value + "'");
+        }
+    }
+
     /** Node rows within a type block, sorted by id (ordinal string compare). */
     static std::vector<const Node*> sortedNodes(const std::unordered_map<std::string, Node>& typeNodes) {
         std::vector<const Node*> nodes;

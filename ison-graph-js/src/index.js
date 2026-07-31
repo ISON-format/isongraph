@@ -169,6 +169,22 @@ export class DuplicateEdgeError extends GraphError {
   }
 }
 
+/**
+ * Node type, node id, or relationship type contains a reserved character.
+ * ':' and '|' are structurally significant to the wire format (':' delimits
+ * `:type:id` references, '|' delimits ISONL columns); allowing them in an
+ * identifier makes the graph unparseable after a toIson()/toIsonl()
+ * round-trip instead of just failing loudly here.
+ */
+export class InvalidIdentifierError extends GraphError {
+  constructor(kind, value) {
+    super(`${kind} must not contain ':' or '|': ${JSON.stringify(value)}`);
+    this.name = "InvalidIdentifierError";
+    this.kind = kind;
+    this.value = value;
+  }
+}
+
 // =============================================================================
 // Helper Functions
 // =============================================================================
@@ -211,11 +227,28 @@ export class ISONGraph {
     this._edgeSet = new Set();
   }
 
+  /**
+   * Reject ':' or '|' in a node type, node id, or relationship type. Both
+   * are structurally significant to the wire format (':' delimits
+   * `:type:id` references, '|' delimits ISONL columns); allowing them here
+   * would build a graph that throws on toIson()/toIsonl() round-trip
+   * instead of failing at construction.
+   */
+  static _checkIdentifier(kind, value) {
+    const s = String(value);
+    if (s.includes(':') || s.includes('|')) {
+      throw new InvalidIdentifierError(kind, s);
+    }
+  }
+
   // =========================================================================
   // Node Operations
   // =========================================================================
 
   addNode(nodeType, nodeId, properties = {}) {
+    ISONGraph._checkIdentifier('Node type', nodeType);
+    ISONGraph._checkIdentifier('Node id', nodeId);
+
     if (!this._nodes.has(nodeType)) {
       this._nodes.set(nodeType, new Map());
     }
@@ -311,6 +344,8 @@ export class ISONGraph {
   // =========================================================================
 
   addEdge(relType, source, target, properties = {}) {
+    ISONGraph._checkIdentifier('Relationship type', relType);
+
     if (!this.hasNode(source[0], source[1])) {
       throw new NodeNotFoundError(source);
     }

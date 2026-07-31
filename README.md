@@ -420,6 +420,19 @@ ISONGraph(name: str = "graph", directed: bool = True)
 | `edge_count(rel_type=None)` | Count edges |
 | `edge_types()` | List all edge types |
 
+ISONGraph is a **simple graph**: `add_edge` raises `DuplicateEdgeError` on a
+repeated `(rel_type, source, target)` triple, so parallel edges between the
+same pair aren't representable. This is deliberate, not a gap to work
+around - the uniqueness of that triple is what lets serialization stay
+canonical (edge rows sort by `(source, target)` with no tie-breaking
+needed). If you're converting from a source that has genuine multigraph
+edges (repeated relationships, multiple timestamps between the same pair),
+resolve that in the converter before calling `add_edge` - either skip
+repeats, or merge their properties into one edge (e.g. a list-valued
+property, or the earliest/latest timestamp), whichever fits the source
+semantics. Catching `DuplicateEdgeError` around the call is the simplest
+way to do this inline.
+
 #### Traversal
 
 | Method | Description |

@@ -193,6 +193,22 @@ class DuplicateEdgeError(GraphError):
         super().__init__(f"Edge already exists: {edge_key}")
 
 
+class InvalidIdentifierError(GraphError):
+    """Node type, node id, or relationship type contains a reserved character.
+
+    ':' and '|' are structurally significant to the ISON/ISONL wire format
+    (':' delimits ``:type:id`` references, '|' delimits ISONL columns);
+    allowing them in an identifier makes the graph unparseable after a
+    to_ison()/to_isonl() round-trip instead of just failing loudly here.
+    """
+    def __init__(self, kind: str, value: str):
+        self.kind = kind
+        self.value = value
+        super().__init__(
+            f"{kind} must not contain ':' or '|': {value!r}"
+        )
+
+
 # =============================================================================
 # ISONGraph - Main Graph Class
 # =============================================================================
@@ -241,6 +257,19 @@ class ISONGraph:
     # Node Operations
     # =========================================================================
 
+    @staticmethod
+    def _check_identifier(kind: str, value: Any) -> None:
+        """Reject ':' or '|' in a node type, node id, or relationship type.
+
+        Both characters are structurally significant to the wire format
+        (':' delimits ``:type:id`` references, '|' delimits ISONL columns);
+        allowing them here would build a graph that throws on
+        to_ison()/to_isonl() round-trip instead of failing at construction.
+        """
+        s = str(value)
+        if ':' in s or '|' in s:
+            raise InvalidIdentifierError(kind, s)
+
     def add_node(
         self,
         node_type: str,
@@ -259,8 +288,12 @@ class ISONGraph:
             The created Node
 
         Raises:
+            InvalidIdentifierError: If node_type or node_id contains ':' or '|'
             DuplicateNodeError: If node already exists
         """
+        self._check_identifier('Node type', node_type)
+        self._check_identifier('Node id', node_id)
+
         if node_id in self._nodes[node_type]:
             raise DuplicateNodeError((node_type, node_id))
 
@@ -381,9 +414,12 @@ class ISONGraph:
             The created Edge
 
         Raises:
+            InvalidIdentifierError: If rel_type contains ':' or '|'
             NodeNotFoundError: If source or target node doesn't exist
             DuplicateEdgeError: If edge already exists
         """
+        self._check_identifier('Relationship type', rel_type)
+
         # Validate nodes exist
         if not self.has_node(source[0], source[1]):
             raise NodeNotFoundError(source)
@@ -1512,6 +1548,7 @@ __all__ = [
     'EdgeNotFoundError',
     'DuplicateNodeError',
     'DuplicateEdgeError',
+    'InvalidIdentifierError',
 
     # Submodules
     'query',

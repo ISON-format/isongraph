@@ -14,6 +14,7 @@ import {
   EdgeNotFoundError,
   DuplicateNodeError,
   DuplicateEdgeError,
+  InvalidIdentifierError,
 } from './index.js';
 
 describe('ISONGraph', () => {
@@ -594,6 +595,45 @@ function buildCanonicalFixture(order) {
   for (const [rel, s, t, props] of seqE) g.addEdge(rel, s, t, props);
   return g;
 }
+
+// =============================================================================
+// Identifier Validation
+//
+// ':' and '|' are structurally significant to the wire format ('type:id'
+// references, ISONL columns); allowing them in a node type, node id, or
+// relationship type builds a graph that throws on toIson()/toIsonl()
+// round-trip instead of failing loudly at construction. Reproduced live
+// before this fix: addNode('a:b', '1') -> toIson() -> fromIson() threw;
+// addNode('rel|type', '1') -> toIsonl() -> fromIsonl() threw a pipe-count
+// mismatch.
+// =============================================================================
+
+describe('Identifier Validation', () => {
+  it.each(['a:b', 'a|b', ':', '|'])('rejects %s as a node type', (bad) => {
+    const g = new ISONGraph();
+    expect(() => g.addNode(bad, '1')).toThrow(InvalidIdentifierError);
+  });
+
+  it.each(['a:b', 'a|b'])('rejects %s as a node id', (bad) => {
+    const g = new ISONGraph();
+    expect(() => g.addNode('person', bad)).toThrow(InvalidIdentifierError);
+  });
+
+  it.each(['a:b', 'a|b'])('rejects %s as a relationship type', (bad) => {
+    const g = new ISONGraph();
+    g.addNode('person', 1);
+    g.addNode('person', 2);
+    expect(() => g.addEdge(bad, ['person', 1], ['person', 2])).toThrow(InvalidIdentifierError);
+  });
+
+  it('still allows spaces, hyphens, and other non-reserved characters', () => {
+    const g = new ISONGraph();
+    g.addNode('a type', 'an id-1');
+    g.addNode('b', 2);
+    const edge = g.addEdge('shares border with', ['a type', 'an id-1'], ['b', 2]);
+    expect(edge.relType).toBe('shares border with');
+  });
+});
 
 describe('Canonical Serialization', () => {
   it('toIson is independent of insertion order', () => {
