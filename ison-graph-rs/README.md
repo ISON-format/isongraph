@@ -136,6 +136,11 @@ let mut graph = ISONGraph::undirected("name");
 | `to_ison()` | Serialize to ISON |
 | `to_isonl()` | Serialize to ISONL |
 
+Output is canonical: node/edge type blocks and rows are sorted (ordinal),
+so the same logical graph always serializes to the same bytes regardless
+of insertion order - byte-identical with every other ISONGraph language
+port.
+
 ## Types
 
 ```rust

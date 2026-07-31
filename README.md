@@ -545,6 +545,8 @@ result = engine.match("person") \
 | `save(path)` | Save to file |
 | `load(path)` | Load from file |
 
+`to_ison()`/`to_isonl()` output is canonical (sorted, insertion-order-independent) - see [Canonical Serialization](#canonical-serialization).
+
 ### ISONGraphantic
 
 #### Field Types
@@ -665,6 +667,24 @@ nodes.person|id name age|1 Alice 30
 nodes.person|id name age|2 Bob 25
 edges.KNOWS|source target since|:person:1 :person:2 2020
 ```
+
+### Canonical Serialization
+
+`to_ison()` / `to_isonl()` output is **canonical**: node type blocks, node
+rows within a block, edge type blocks, and edge rows within a block are all
+sorted (ordinal string comparison), independent of insertion order. The same
+logical graph always serializes to the same bytes, regardless of
+construction history - two graphs built from the same nodes and edges in a
+different order, or rebuilt across separate runs, produce byte-identical
+output. This is what makes ISON output safe to content-address or use as an
+LLM prompt-cache prefix: appending or reordering how you built the graph in
+memory never changes what gets written.
+
+Sort order is ordinal, not numeric - node ids `"1"`, `"2"`, `"10"` serialize
+in that order (`"1" < "10" < "2"` as strings), consistently across every
+language port. All six implementations (Python, JavaScript, TypeScript,
+Rust, C++, C#) are verified byte-identical against a shared golden fixture
+in their test suites.
 
 ---
 

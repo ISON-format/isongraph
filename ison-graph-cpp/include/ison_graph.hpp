@@ -20,7 +20,7 @@
  * ```
  *
  * Author: Mahesh Vaikri
- * Version: 1.0.0
+ * Version: 1.1.0
  */
 
 #ifndef ISON_GRAPH_HPP
@@ -40,11 +40,12 @@
 #include <functional>
 #include <stdexcept>
 #include <fstream>
+#include <tuple>
 #include <regex>
 
 namespace ison_graph {
 
-constexpr const char* VERSION = "1.0.0";
+constexpr const char* VERSION = "1.1.0";
 
 // =============================================================================
 // Types
@@ -870,11 +871,12 @@ public:
         for (const auto& nodeType : sortedNodeTypes) {
             const auto& typeNodes = nodes_.at(nodeType);
             if (typeNodes.empty()) continue;
+            auto sortedTypeNodes = sortedNodes(typeNodes);
 
             // Collect all property keys
             std::set<std::string> propKeys;
-            for (const auto& [id, node] : typeNodes) {
-                for (const auto& [k, v] : node.properties) {
+            for (const auto* node : sortedTypeNodes) {
+                for (const auto& [k, v] : node->properties) {
                     propKeys.insert(k);
                 }
             }
@@ -887,11 +889,11 @@ public:
             }
             block << "\n";
 
-            for (const auto& [id, node] : typeNodes) {
-                block << quoteValue(node.id);
+            for (const auto* node : sortedTypeNodes) {
+                block << quoteValue(node->id);
                 for (const auto& k : propKeys) {
-                    auto it = node.properties.find(k);
-                    block << " " << quoteValue(it != node.properties.end() ? it->second : "null");
+                    auto it = node->properties.find(k);
+                    block << " " << quoteValue(it != node->properties.end() ? it->second : "null");
                 }
                 block << "\n";
             }
@@ -909,11 +911,12 @@ public:
         for (const auto& relType : sortedEdgeTypes) {
             const auto& relEdges = edges_.at(relType);
             if (relEdges.empty()) continue;
+            auto sortedTypeEdges = sortedEdges(relEdges);
 
             // Collect all property keys
             std::set<std::string> propKeys;
-            for (const auto& edge : relEdges) {
-                for (const auto& [k, v] : edge.properties) {
+            for (const auto* edge : sortedTypeEdges) {
+                for (const auto& [k, v] : edge->properties) {
                     propKeys.insert(k);
                 }
             }
@@ -926,11 +929,11 @@ public:
             }
             block << "\n";
 
-            for (const auto& edge : relEdges) {
-                block << edge.source.toIsonRef() << " " << edge.target.toIsonRef();
+            for (const auto* edge : sortedTypeEdges) {
+                block << edge->source.toIsonRef() << " " << edge->target.toIsonRef();
                 for (const auto& k : propKeys) {
-                    auto it = edge.properties.find(k);
-                    block << " " << quoteValue(it != edge.properties.end() ? it->second : "null");
+                    auto it = edge->properties.find(k);
+                    block << " " << quoteValue(it != edge->properties.end() ? it->second : "null");
                 }
                 block << "\n";
             }
@@ -943,37 +946,60 @@ public:
             ss << blocks[i];
         }
 
-        return ss.str();
+        // Each block's own row-building loop terminates every row (including
+        // the last) with "\n", so the final block leaves one extra trailing
+        // newline that the other ISON ports' line-join approach never
+        // produces. Strip it so toIson() output is byte-identical across
+        // languages, not just internally order-independent.
+        std::string result = ss.str();
+        if (!result.empty() && result.back() == '\n') {
+            result.pop_back();
+        }
+        return result;
     }
 
     /** Serialize graph to ISONL streaming format */
     std::string toIsonl() const {
         std::ostringstream ss;
 
-        // Serialize nodes
-        forEachNode([&](const Node& node) {
-            std::vector<std::string> propKeys;
-            for (const auto& [k, _] : node.properties) {
-                propKeys.push_back(k);
-            }
-            std::sort(propKeys.begin(), propKeys.end());
+        // Serialize nodes (type blocks, then rows, both sorted)
+        std::vector<std::string> sortedNodeTypes;
+        for (const auto& [type, _] : nodes_) {
+            sortedNodeTypes.push_back(type);
+        }
+        std::sort(sortedNodeTypes.begin(), sortedNodeTypes.end());
 
-            ss << "nodes." << node.type << "|id";
-            for (const auto& k : propKeys) {
-                ss << " " << k;
-            }
-            ss << "|" << quoteValue(node.id);
-            for (const auto& k : propKeys) {
-                ss << " " << quoteValue(node.properties.at(k));
-            }
-            ss << "\n";
-        });
-
-        // Serialize edges
-        for (const auto& [relType, relEdges] : edges_) {
-            for (const auto& edge : relEdges) {
+        for (const auto& nodeType : sortedNodeTypes) {
+            for (const auto* node : sortedNodes(nodes_.at(nodeType))) {
                 std::vector<std::string> propKeys;
-                for (const auto& [k, _] : edge.properties) {
+                for (const auto& [k, _] : node->properties) {
+                    propKeys.push_back(k);
+                }
+                std::sort(propKeys.begin(), propKeys.end());
+
+                ss << "nodes." << node->type << "|id";
+                for (const auto& k : propKeys) {
+                    ss << " " << k;
+                }
+                ss << "|" << quoteValue(node->id);
+                for (const auto& k : propKeys) {
+                    ss << " " << quoteValue(node->properties.at(k));
+                }
+                ss << "\n";
+            }
+        }
+
+        // Serialize edges (type blocks, then rows, both sorted)
+        std::vector<std::string> sortedEdgeTypes;
+        for (const auto& [type, _] : edges_) {
+            sortedEdgeTypes.push_back(type);
+        }
+        std::sort(sortedEdgeTypes.begin(), sortedEdgeTypes.end());
+
+        for (const auto& relType : sortedEdgeTypes) {
+            for (const auto* edge : sortedEdges(edges_.at(relType))) {
+                std::vector<std::string> propKeys;
+                for (const auto& [k, _] : edge->properties) {
                     propKeys.push_back(k);
                 }
                 std::sort(propKeys.begin(), propKeys.end());
@@ -982,15 +1008,21 @@ public:
                 for (const auto& k : propKeys) {
                     ss << " " << k;
                 }
-                ss << "|" << edge.source.toIsonRef() << " " << edge.target.toIsonRef();
+                ss << "|" << edge->source.toIsonRef() << " " << edge->target.toIsonRef();
                 for (const auto& k : propKeys) {
-                    ss << " " << quoteValue(edge.properties.at(k));
+                    ss << " " << quoteValue(edge->properties.at(k));
                 }
                 ss << "\n";
             }
         }
 
-        return ss.str();
+        // See toIson(): strip the last row's trailing newline so output is
+        // byte-identical to the other ISON ports (line-join, no trailing \n).
+        std::string result = ss.str();
+        if (!result.empty() && result.back() == '\n') {
+            result.pop_back();
+        }
+        return result;
     }
 
     // =========================================================================
@@ -998,6 +1030,37 @@ public:
     // =========================================================================
 
 private:
+    /** Node rows within a type block, sorted by id (ordinal string compare). */
+    static std::vector<const Node*> sortedNodes(const std::unordered_map<std::string, Node>& typeNodes) {
+        std::vector<const Node*> nodes;
+        nodes.reserve(typeNodes.size());
+        for (const auto& [id, node] : typeNodes) {
+            nodes.push_back(&node);
+        }
+        std::sort(nodes.begin(), nodes.end(), [](const Node* a, const Node* b) {
+            return a->id < b->id;
+        });
+        return nodes;
+    }
+
+    /**
+     * Edge rows within a rel_type block, sorted by
+     * (source.type, source.id, target.type, target.id) - ordinal.
+     */
+    static std::vector<const Edge*> sortedEdges(const std::vector<Edge>& edges) {
+        std::vector<const Edge*> result;
+        result.reserve(edges.size());
+        for (const auto& edge : edges) {
+            result.push_back(&edge);
+        }
+        std::sort(result.begin(), result.end(), [](const Edge* a, const Edge* b) {
+            auto ka = std::tie(a->source.type, a->source.id, a->target.type, a->target.id);
+            auto kb = std::tie(b->source.type, b->source.id, b->target.type, b->target.id);
+            return ka < kb;
+        });
+        return result;
+    }
+
     /** Helper to trim whitespace */
     static std::string trim(const std::string& s) {
         size_t start = s.find_first_not_of(" \t\r\n");

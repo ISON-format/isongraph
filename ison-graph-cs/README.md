@@ -142,6 +142,11 @@ var graph = new ISONGraph("name", directed: false); // Undirected graph
 | `ISONGraph.FromIson(text)` / `FromIsonl(text)` | Parse (strict; malformed input throws) |
 | `Save(path)` / `ISONGraph.Load(path)` | File I/O (format by extension) |
 
+`ToIson()`/`ToIsonl()` are canonical: node/edge type blocks and rows are
+sorted (ordinal, `StringComparer.Ordinal`), so the same logical graph
+always serializes to the same bytes regardless of insertion order -
+byte-identical with every other ISONGraph language port.
+
 ### Types
 
 ```csharp

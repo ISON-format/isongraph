@@ -54,7 +54,7 @@ from ison_parser import (
     loads_isonl, dumps_isonl
 )
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 __author__ = "Mahesh Vaikri"
 
 
@@ -1001,12 +1001,19 @@ class ISONGraph:
             edges.{rel_type}
             source target {property_fields...}
             {source_ref} {target_ref} {property_values...}
+
+        Serialization is canonical: node type blocks, node rows within a
+        block, edge type blocks, and edge rows within a block are all sorted
+        (ordinal string comparison), independent of insertion order. The
+        same logical graph always serializes to the same bytes, regardless
+        of construction history - this is what makes ``to_ison()`` output
+        safe to rely on for content-addressing or prompt caching.
         """
         blocks = []
 
         # Serialize nodes by type
         for node_type in sorted(self._nodes.keys()):
-            nodes = list(self._nodes[node_type].values())
+            nodes = sorted(self._nodes[node_type].values(), key=lambda n: str(n.id))
             if not nodes:
                 continue
 
@@ -1032,7 +1039,10 @@ class ISONGraph:
 
         # Serialize edges by type
         for rel_type in sorted(self._edges.keys()):
-            edges = self._edges[rel_type]
+            edges = sorted(
+                self._edges[rel_type],
+                key=lambda e: (e.source[0], str(e.source[1]), e.target[0], str(e.target[1])),
+            )
             if not edges:
                 continue
 
@@ -1081,22 +1091,33 @@ class ISONGraph:
         return str(value)
 
     def to_isonl(self) -> str:
-        """Serialize graph to ISONL streaming format"""
+        """
+        Serialize graph to ISONL streaming format.
+
+        Row order is canonical, matching :meth:`to_ison` - see there for
+        the exact ordering rule.
+        """
         lines = []
 
-        # Serialize nodes
-        for node in self.nodes():
-            prop_keys = sorted(node.properties.keys())
-            fields = ["id"] + prop_keys
-            values = [str(node.id)] + [
-                self._value_to_ison(node.properties.get(k))
-                for k in prop_keys
-            ]
-            line = f"nodes.{node.type}|{' '.join(fields)}|{' '.join(values)}"
-            lines.append(line)
+        # Serialize nodes (type blocks, then rows, both sorted)
+        for node_type in sorted(self._nodes.keys()):
+            nodes = sorted(self._nodes[node_type].values(), key=lambda n: str(n.id))
+            for node in nodes:
+                prop_keys = sorted(node.properties.keys())
+                fields = ["id"] + prop_keys
+                values = [str(node.id)] + [
+                    self._value_to_ison(node.properties.get(k))
+                    for k in prop_keys
+                ]
+                line = f"nodes.{node.type}|{' '.join(fields)}|{' '.join(values)}"
+                lines.append(line)
 
-        # Serialize edges
-        for rel_type, edges in self._edges.items():
+        # Serialize edges (type blocks, then rows, both sorted)
+        for rel_type in sorted(self._edges.keys()):
+            edges = sorted(
+                self._edges[rel_type],
+                key=lambda e: (e.source[0], str(e.source[1]), e.target[0], str(e.target[1])),
+            )
             for edge in edges:
                 prop_keys = sorted(edge.properties.keys())
                 fields = ["source", "target"] + prop_keys

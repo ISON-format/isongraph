@@ -491,3 +491,133 @@ public class FileIoTests
         }
     }
 }
+
+// =============================================================================
+// Canonical Serialization
+//
+// ToIson()/ToIsonl() must be byte-identical for the same logical graph
+// regardless of insertion order (node type blocks, node rows, edge type
+// blocks, and edge rows are all sorted, ordinal string comparison). The
+// golden fixture below is shared verbatim across every ISONGraph language
+// port's test suite (Python, JS, TS, Rust, C++, C#) as the cross-language
+// byte-identity contract - if it changes here, it must change everywhere.
+// =============================================================================
+
+public class CanonicalSerializationTests
+{
+    private const string GoldenIson =
+        "nodes.company\n" +
+        "id name\n" +
+        "acme \"Acme Corp\"\n" +
+        "\n" +
+        "nodes.person\n" +
+        "id age name\n" +
+        "1 30 Alice\n" +
+        "10 22 Jax\n" +
+        "2 25 Bob\n" +
+        "\n" +
+        "nodes.project\n" +
+        "id name tag\n" +
+        "p1 Alpha \"a|b\"\n" +
+        "\n" +
+        "edges.KNOWS\n" +
+        "source target since\n" +
+        ":person:1 :person:2 2020\n" +
+        ":person:10 :person:1 2021\n" +
+        "\n" +
+        "edges.WORKS_AT\n" +
+        "source target role\n" +
+        ":person:1 :company:acme \"Lead Engineer\"\n" +
+        "\n" +
+        "edges.WORKS_ON\n" +
+        "source target hours\n" +
+        ":person:10 :project:p1 3\n" +
+        ":person:2 :project:p1 5";
+
+    private const string GoldenIsonl =
+        "nodes.company|id name|acme \"Acme Corp\"\n" +
+        "nodes.person|id age name|1 30 Alice\n" +
+        "nodes.person|id age name|10 22 Jax\n" +
+        "nodes.person|id age name|2 25 Bob\n" +
+        "nodes.project|id name tag|p1 Alpha \"a|b\"\n" +
+        "edges.KNOWS|source target since|:person:1 :person:2 2020\n" +
+        "edges.KNOWS|source target since|:person:10 :person:1 2021\n" +
+        "edges.WORKS_AT|source target role|:person:1 :company:acme \"Lead Engineer\"\n" +
+        "edges.WORKS_ON|source target hours|:person:10 :project:p1 3\n" +
+        "edges.WORKS_ON|source target hours|:person:2 :project:p1 5";
+
+    private static ISONGraph BuildCanonicalFixture(int order)
+    {
+        var g = new ISONGraph("fixture");
+        var nodes = new (string Type, string Id, Dictionary<string, string> Props)[]
+        {
+            ("company", "acme", Props.Of(("name", "Acme Corp"))),
+            ("person", "1", Props.Of(("name", "Alice"), ("age", "30"))),
+            ("person", "10", Props.Of(("name", "Jax"), ("age", "22"))),
+            ("person", "2", Props.Of(("name", "Bob"), ("age", "25"))),
+            ("project", "p1", Props.Of(("name", "Alpha"), ("tag", "a|b"))),
+        };
+        var edges = new (string Rel, NodeRef Source, NodeRef Target, Dictionary<string, string> Props)[]
+        {
+            ("KNOWS", new("person", "10"), new("person", "1"), Props.Of(("since", "2021"))),
+            ("KNOWS", new("person", "1"), new("person", "2"), Props.Of(("since", "2020"))),
+            ("WORKS_AT", new("person", "1"), new("company", "acme"), Props.Of(("role", "Lead Engineer"))),
+            ("WORKS_ON", new("person", "2"), new("project", "p1"), Props.Of(("hours", "5"))),
+            ("WORKS_ON", new("person", "10"), new("project", "p1"), Props.Of(("hours", "3"))),
+        };
+        var n = order == 0 ? nodes : nodes.Reverse().ToArray();
+        var e = order == 0 ? edges : edges.Reverse().ToArray();
+        foreach (var (t, i, props) in n)
+            g.AddNode(t, i, props);
+        foreach (var (rel, s, t, props) in e)
+            g.AddEdge(rel, s, t, props);
+        return g;
+    }
+
+    [Fact]
+    public void ToIsonIndependentOfInsertionOrder()
+    {
+        Assert.Equal(BuildCanonicalFixture(0).ToIson(), BuildCanonicalFixture(1).ToIson());
+    }
+
+    [Fact]
+    public void ToIsonlIndependentOfInsertionOrder()
+    {
+        Assert.Equal(BuildCanonicalFixture(0).ToIsonl(), BuildCanonicalFixture(1).ToIsonl());
+    }
+
+    [Fact]
+    public void ToIsonMatchesGoldenFixture()
+    {
+        Assert.Equal(GoldenIson, BuildCanonicalFixture(0).ToIson());
+        Assert.Equal(GoldenIson, BuildCanonicalFixture(1).ToIson());
+    }
+
+    [Fact]
+    public void ToIsonlMatchesGoldenFixture()
+    {
+        Assert.Equal(GoldenIsonl, BuildCanonicalFixture(0).ToIsonl());
+        Assert.Equal(GoldenIsonl, BuildCanonicalFixture(1).ToIsonl());
+    }
+
+    [Fact]
+    public void OrdinalNotNumericSort()
+    {
+        // "1" < "10" < "2" ordinally.
+        var ison = BuildCanonicalFixture(0).ToIson();
+        var start = ison.IndexOf("nodes.person\n", StringComparison.Ordinal) + "nodes.person\n".Length;
+        var end = ison.IndexOf("\n\n", start, StringComparison.Ordinal);
+        var personBlock = ison[start..end];
+        var lines = personBlock.Split('\n');
+        var ids = lines.Skip(1).Select(l => l.Split(' ')[0]).ToArray();
+        Assert.Equal(new[] { "1", "10", "2" }, ids);
+    }
+
+    [Fact]
+    public void RoundtripPreservesCanonicalForm()
+    {
+        var g = BuildCanonicalFixture(0);
+        var reloaded = ISONGraph.FromIson(g.ToIson());
+        Assert.Equal(g.ToIson(), reloaded.ToIson());
+    }
+}

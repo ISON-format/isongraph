@@ -41,7 +41,7 @@
 
 namespace isongraphantic {
 
-constexpr const char* VERSION = "1.0.0";
+constexpr const char* VERSION = "1.1.0";
 
 // =============================================================================
 // Enums

@@ -1135,8 +1135,35 @@ export class ISONGraph {
     return String(value);
   }
 
+  /** Sorted node rows within a type block: ordinal comparison of String(id). */
+  private static _sortedNodes(typeNodes: Map<string | number, Node>): Node[] {
+    return Array.from(typeNodes.values()).sort((a, b) => {
+      const ka = String(a.id), kb = String(b.id);
+      return ka < kb ? -1 : ka > kb ? 1 : 0;
+    });
+  }
+
+  /** Sorted edge rows within a rel_type block: ordinal (sourceType, sourceId, targetType, targetId). */
+  private static _sortedEdges(edges: Edge[]): Edge[] {
+    return [...edges].sort((a, b) => {
+      const ka = [a.source[0], String(a.source[1]), a.target[0], String(a.target[1])];
+      const kb = [b.source[0], String(b.source[1]), b.target[0], String(b.target[1])];
+      for (let i = 0; i < 4; i++) {
+        if (ka[i] < kb[i]) return -1;
+        if (ka[i] > kb[i]) return 1;
+      }
+      return 0;
+    });
+  }
+
   /**
    * Serialize graph to ISON format.
+   *
+   * Serialization is canonical: node type blocks, node rows within a block,
+   * edge type blocks, and edge rows within a block are all sorted (ordinal
+   * string comparison), independent of insertion order. The same logical
+   * graph always serializes to the same bytes, regardless of construction
+   * history.
    */
   toIson(): string {
     const blocks: string[] = [];
@@ -1146,10 +1173,11 @@ export class ISONGraph {
     for (const nodeType of nodeTypes) {
       const typeNodes = this._nodes.get(nodeType)!;
       if (typeNodes.size === 0) continue;
+      const sortedTypeNodes = ISONGraph._sortedNodes(typeNodes);
 
       // Collect all property keys
       const propKeys = new Set<string>();
-      for (const node of typeNodes.values()) {
+      for (const node of sortedTypeNodes) {
         for (const key of Object.keys(node.properties)) {
           propKeys.add(key);
         }
@@ -1160,7 +1188,7 @@ export class ISONGraph {
       const lines: string[] = [`nodes.${nodeType}`];
       lines.push(["id", ...sortedPropKeys].join(" "));
 
-      for (const node of typeNodes.values()) {
+      for (const node of sortedTypeNodes) {
         const values = [String(node.id)];
         for (const key of sortedPropKeys) {
           values.push(this._valueToIson(node.properties[key]));
@@ -1176,10 +1204,11 @@ export class ISONGraph {
     for (const relType of edgeTypes) {
       const edges = this._edges.get(relType)!;
       if (edges.length === 0) continue;
+      const sortedTypeEdges = ISONGraph._sortedEdges(edges);
 
       // Collect all property keys
       const propKeys = new Set<string>();
-      for (const edge of edges) {
+      for (const edge of sortedTypeEdges) {
         for (const key of Object.keys(edge.properties)) {
           propKeys.add(key);
         }
@@ -1190,7 +1219,7 @@ export class ISONGraph {
       const lines: string[] = [`edges.${relType}`];
       lines.push(["source", "target", ...sortedPropKeys].join(" "));
 
-      for (const edge of edges) {
+      for (const edge of sortedTypeEdges) {
         const sourceRef = `:${edge.source[0]}:${edge.source[1]}`;
         const targetRef = `:${edge.target[0]}:${edge.target[1]}`;
         const values = [sourceRef, targetRef];
@@ -1206,21 +1235,32 @@ export class ISONGraph {
     return blocks.join("\n\n");
   }
 
-  /** Serialize graph to ISONL streaming format */
+  /**
+   * Serialize graph to ISONL streaming format.
+   *
+   * Row order is canonical, matching {@link toIson} - see there for the
+   * exact ordering rule.
+   */
   toIsonl(): string {
     const lines: string[] = [];
 
-    // Serialize nodes
-    for (const node of this.nodes()) {
-      const propKeys = Object.keys(node.properties).sort();
-      const fields = ["id", ...propKeys];
-      const values = [String(node.id), ...propKeys.map(k => this._valueToIson(node.properties[k]))];
-      lines.push(`nodes.${node.type}|${fields.join(" ")}|${values.join(" ")}`);
+    // Serialize nodes (type blocks, then rows, both sorted)
+    const nodeTypes = Array.from(this._nodes.keys()).sort();
+    for (const nodeType of nodeTypes) {
+      const typeNodes = this._nodes.get(nodeType)!;
+      for (const node of ISONGraph._sortedNodes(typeNodes)) {
+        const propKeys = Object.keys(node.properties).sort();
+        const fields = ["id", ...propKeys];
+        const values = [String(node.id), ...propKeys.map(k => this._valueToIson(node.properties[k]))];
+        lines.push(`nodes.${node.type}|${fields.join(" ")}|${values.join(" ")}`);
+      }
     }
 
-    // Serialize edges
-    for (const [relType, edges] of this._edges) {
-      for (const edge of edges) {
+    // Serialize edges (type blocks, then rows, both sorted)
+    const edgeTypes = Array.from(this._edges.keys()).sort();
+    for (const relType of edgeTypes) {
+      const edges = this._edges.get(relType)!;
+      for (const edge of ISONGraph._sortedEdges(edges)) {
         const propKeys = Object.keys(edge.properties).sort();
         const fields = ["source", "target", ...propKeys];
         const sourceRef = `:${edge.source[0]}:${edge.source[1]}`;

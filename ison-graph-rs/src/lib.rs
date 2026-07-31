@@ -1092,7 +1092,35 @@ impl ISONGraph {
         }
     }
 
-    /// Serialize graph to ISON format
+    /// Node rows within a type block, sorted by `id` (ordinal string compare).
+    fn sorted_nodes(type_nodes: &HashMap<String, Node>) -> Vec<&Node> {
+        let mut nodes: Vec<&Node> = type_nodes.values().collect();
+        nodes.sort_by(|a, b| a.id.cmp(&b.id));
+        nodes
+    }
+
+    /// Edge rows within a rel_type block, sorted by
+    /// `(source_type, source_id, target_type, target_id)` (ordinal).
+    fn sorted_edges(edges: &[Edge]) -> Vec<&Edge> {
+        let mut edges: Vec<&Edge> = edges.iter().collect();
+        edges.sort_by(|a, b| {
+            (&a.source.node_type, &a.source.id, &a.target.node_type, &a.target.id).cmp(&(
+                &b.source.node_type,
+                &b.source.id,
+                &b.target.node_type,
+                &b.target.id,
+            ))
+        });
+        edges
+    }
+
+    /// Serialize graph to ISON format.
+    ///
+    /// Serialization is canonical: node type blocks, node rows within a
+    /// block, edge type blocks, and edge rows within a block are all sorted
+    /// (ordinal string comparison), independent of insertion order. The
+    /// same logical graph always serializes to the same bytes, regardless
+    /// of construction history.
     pub fn to_ison(&self) -> String {
         let mut blocks: Vec<String> = Vec::new();
 
@@ -1105,10 +1133,11 @@ impl ISONGraph {
             if type_nodes.is_empty() {
                 continue;
             }
+            let sorted_type_nodes = Self::sorted_nodes(type_nodes);
 
             // Collect all property keys
             let mut prop_keys: HashSet<&String> = HashSet::new();
-            for node in type_nodes.values() {
+            for node in &sorted_type_nodes {
                 for key in node.properties.keys() {
                     prop_keys.insert(key);
                 }
@@ -1125,7 +1154,7 @@ impl ISONGraph {
             }
             lines.push(fields.join(" "));
 
-            for node in type_nodes.values() {
+            for node in &sorted_type_nodes {
                 let mut values: Vec<String> = vec![Self::quote_value(&node.id)];
                 for k in &sorted_keys {
                     let val = node.properties.get(*k).map(|s| s.as_str()).unwrap_or("null");
@@ -1146,10 +1175,11 @@ impl ISONGraph {
             if edges.is_empty() {
                 continue;
             }
+            let sorted_type_edges = Self::sorted_edges(edges);
 
             // Collect all property keys
             let mut prop_keys: HashSet<&String> = HashSet::new();
-            for edge in edges {
+            for edge in &sorted_type_edges {
                 for key in edge.properties.keys() {
                     prop_keys.insert(key);
                 }
@@ -1166,7 +1196,7 @@ impl ISONGraph {
             }
             lines.push(fields.join(" "));
 
-            for edge in edges {
+            for edge in &sorted_type_edges {
                 let source_ref = Self::quote_value(&edge.source.to_ison_ref());
                 let target_ref = Self::quote_value(&edge.target.to_ison_ref());
                 let mut values: Vec<String> = vec![source_ref, target_ref];
@@ -1187,35 +1217,45 @@ impl ISONGraph {
     pub fn to_isonl(&self) -> String {
         let mut lines: Vec<String> = Vec::new();
 
-        // Serialize nodes
-        for node in self.nodes() {
-            let mut prop_keys: Vec<_> = node.properties.keys().collect();
-            prop_keys.sort();
+        // Serialize nodes (type blocks, then rows, both sorted)
+        let mut node_types: Vec<_> = self.nodes.keys().collect();
+        node_types.sort();
 
-            let fields: Vec<&str> = std::iter::once("id")
-                .chain(prop_keys.iter().map(|s| s.as_str()))
-                .collect();
+        for node_type in node_types {
+            let type_nodes = &self.nodes[node_type];
+            for node in Self::sorted_nodes(type_nodes) {
+                let mut prop_keys: Vec<_> = node.properties.keys().collect();
+                prop_keys.sort();
 
-            let values: Vec<String> = std::iter::once(Self::quote_value(&node.id))
-                .chain(prop_keys.iter().map(|k| {
-                    node.properties
-                        .get(*k)
-                        .map(|v| Self::quote_value(v))
-                        .unwrap_or_else(|| "null".to_string())
-                }))
-                .collect();
+                let fields: Vec<&str> = std::iter::once("id")
+                    .chain(prop_keys.iter().map(|s| s.as_str()))
+                    .collect();
 
-            lines.push(format!(
-                "nodes.{}|{}|{}",
-                node.node_type,
-                fields.join(" "),
-                values.join(" ")
-            ));
+                let values: Vec<String> = std::iter::once(Self::quote_value(&node.id))
+                    .chain(prop_keys.iter().map(|k| {
+                        node.properties
+                            .get(*k)
+                            .map(|v| Self::quote_value(v))
+                            .unwrap_or_else(|| "null".to_string())
+                    }))
+                    .collect();
+
+                lines.push(format!(
+                    "nodes.{}|{}|{}",
+                    node.node_type,
+                    fields.join(" "),
+                    values.join(" ")
+                ));
+            }
         }
 
-        // Serialize edges
-        for (rel_type, edges) in &self.edges {
-            for edge in edges {
+        // Serialize edges (type blocks, then rows, both sorted)
+        let mut edge_types: Vec<_> = self.edges.keys().collect();
+        edge_types.sort();
+
+        for rel_type in edge_types {
+            let edges = &self.edges[rel_type];
+            for edge in Self::sorted_edges(edges) {
                 let mut prop_keys: Vec<_> = edge.properties.keys().collect();
                 prop_keys.sort();
 
@@ -2583,5 +2623,129 @@ source target since
             .count();
 
         assert_eq!(count, 1);
+    }
+
+    // =========================================================================
+    // Canonical Serialization
+    //
+    // to_ison()/to_isonl() must be byte-identical for the same logical graph
+    // regardless of insertion order (node type blocks, node rows, edge type
+    // blocks, and edge rows are all sorted, ordinal string comparison). The
+    // golden fixture below is shared verbatim across every ISONGraph
+    // language port's test suite (Python, JS, TS, Rust, C++, C#) as the
+    // cross-language byte-identity contract - if it changes here, it must
+    // change everywhere.
+    // =========================================================================
+
+    const CANONICAL_GOLDEN_ISON: &str = "nodes.company
+id name
+acme \"Acme Corp\"
+
+nodes.person
+id age name
+1 30 Alice
+10 22 Jax
+2 25 Bob
+
+nodes.project
+id name tag
+p1 Alpha \"a|b\"
+
+edges.KNOWS
+source target since
+:person:1 :person:2 2020
+:person:10 :person:1 2021
+
+edges.WORKS_AT
+source target role
+:person:1 :company:acme \"Lead Engineer\"
+
+edges.WORKS_ON
+source target hours
+:person:10 :project:p1 3
+:person:2 :project:p1 5";
+
+    const CANONICAL_GOLDEN_ISONL: &str = "nodes.company|id name|acme \"Acme Corp\"
+nodes.person|id age name|1 30 Alice
+nodes.person|id age name|10 22 Jax
+nodes.person|id age name|2 25 Bob
+nodes.project|id name tag|p1 Alpha \"a|b\"
+edges.KNOWS|source target since|:person:1 :person:2 2020
+edges.KNOWS|source target since|:person:10 :person:1 2021
+edges.WORKS_AT|source target role|:person:1 :company:acme \"Lead Engineer\"
+edges.WORKS_ON|source target hours|:person:10 :project:p1 3
+edges.WORKS_ON|source target hours|:person:2 :project:p1 5";
+
+    #[allow(clippy::type_complexity)]
+    fn build_canonical_fixture(order: usize) -> ISONGraph {
+        let mut g = ISONGraph::new("fixture");
+        let nodes: Vec<(&str, &str, Vec<(&str, &str)>)> = vec![
+            ("company", "acme", vec![("name", "Acme Corp")]),
+            ("person", "1", vec![("name", "Alice"), ("age", "30")]),
+            ("person", "10", vec![("name", "Jax"), ("age", "22")]),
+            ("person", "2", vec![("name", "Bob"), ("age", "25")]),
+            ("project", "p1", vec![("name", "Alpha"), ("tag", "a|b")]),
+        ];
+        let edges: Vec<(&str, (&str, &str), (&str, &str), Vec<(&str, &str)>)> = vec![
+            ("KNOWS", ("person", "10"), ("person", "1"), vec![("since", "2021")]),
+            ("KNOWS", ("person", "1"), ("person", "2"), vec![("since", "2020")]),
+            ("WORKS_AT", ("person", "1"), ("company", "acme"), vec![("role", "Lead Engineer")]),
+            ("WORKS_ON", ("person", "2"), ("project", "p1"), vec![("hours", "5")]),
+            ("WORKS_ON", ("person", "10"), ("project", "p1"), vec![("hours", "3")]),
+        ];
+        let mut n = nodes;
+        let mut e = edges;
+        if order != 0 {
+            n.reverse();
+            e.reverse();
+        }
+        for (t, i, props) in n {
+            g.add_node(t, i, props).unwrap();
+        }
+        for (rel, s, t, props) in e {
+            g.add_edge(rel, s, t, props).unwrap();
+        }
+        g
+    }
+
+    #[test]
+    fn test_to_ison_independent_of_insertion_order() {
+        assert_eq!(build_canonical_fixture(0).to_ison(), build_canonical_fixture(1).to_ison());
+    }
+
+    #[test]
+    fn test_to_isonl_independent_of_insertion_order() {
+        assert_eq!(build_canonical_fixture(0).to_isonl(), build_canonical_fixture(1).to_isonl());
+    }
+
+    #[test]
+    fn test_to_ison_matches_golden_fixture() {
+        assert_eq!(build_canonical_fixture(0).to_ison(), CANONICAL_GOLDEN_ISON);
+        assert_eq!(build_canonical_fixture(1).to_ison(), CANONICAL_GOLDEN_ISON);
+    }
+
+    #[test]
+    fn test_to_isonl_matches_golden_fixture() {
+        assert_eq!(build_canonical_fixture(0).to_isonl(), CANONICAL_GOLDEN_ISONL);
+        assert_eq!(build_canonical_fixture(1).to_isonl(), CANONICAL_GOLDEN_ISONL);
+    }
+
+    #[test]
+    fn test_ordinal_not_numeric_sort() {
+        // "1" < "10" < "2" ordinally.
+        let ison = build_canonical_fixture(0).to_ison();
+        let person_block = ison.split("nodes.person
+").nth(1).unwrap().split("
+
+").next().unwrap();
+        let ids: Vec<&str> = person_block.lines().skip(1).map(|l| l.split(' ').next().unwrap()).collect();
+        assert_eq!(ids, vec!["1", "10", "2"]);
+    }
+
+    #[test]
+    fn test_roundtrip_preserves_canonical_form() {
+        let g = build_canonical_fixture(0);
+        let reloaded = ISONGraph::from_ison(&g.to_ison(), None).unwrap();
+        assert_eq!(reloaded.to_ison(), g.to_ison());
     }
 }

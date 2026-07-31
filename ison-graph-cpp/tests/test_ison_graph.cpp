@@ -741,6 +741,126 @@ TEST(collect_nodes) {
 }
 
 // =============================================================================
+// Canonical Serialization
+//
+// toIson()/toIsonl() must be byte-identical for the same logical graph
+// regardless of insertion order (node type blocks, node rows, edge type
+// blocks, and edge rows are all sorted, ordinal string comparison). The
+// golden fixture below is shared verbatim across every ISONGraph language
+// port's test suite (Python, JS, TS, Rust, C++, C#) as the cross-language
+// byte-identity contract - if it changes here, it must change everywhere.
+// =============================================================================
+
+static const std::string CANONICAL_GOLDEN_ISON =
+    "nodes.company\n"
+    "id name\n"
+    "acme \"Acme Corp\"\n"
+    "\n"
+    "nodes.person\n"
+    "id age name\n"
+    "1 30 Alice\n"
+    "10 22 Jax\n"
+    "2 25 Bob\n"
+    "\n"
+    "nodes.project\n"
+    "id name tag\n"
+    "p1 Alpha \"a|b\"\n"
+    "\n"
+    "edges.KNOWS\n"
+    "source target since\n"
+    ":person:1 :person:2 2020\n"
+    ":person:10 :person:1 2021\n"
+    "\n"
+    "edges.WORKS_AT\n"
+    "source target role\n"
+    ":person:1 :company:acme \"Lead Engineer\"\n"
+    "\n"
+    "edges.WORKS_ON\n"
+    "source target hours\n"
+    ":person:10 :project:p1 3\n"
+    ":person:2 :project:p1 5";
+
+static const std::string CANONICAL_GOLDEN_ISONL =
+    "nodes.company|id name|acme \"Acme Corp\"\n"
+    "nodes.person|id age name|1 30 Alice\n"
+    "nodes.person|id age name|10 22 Jax\n"
+    "nodes.person|id age name|2 25 Bob\n"
+    "nodes.project|id name tag|p1 Alpha \"a|b\"\n"
+    "edges.KNOWS|source target since|:person:1 :person:2 2020\n"
+    "edges.KNOWS|source target since|:person:10 :person:1 2021\n"
+    "edges.WORKS_AT|source target role|:person:1 :company:acme \"Lead Engineer\"\n"
+    "edges.WORKS_ON|source target hours|:person:10 :project:p1 3\n"
+    "edges.WORKS_ON|source target hours|:person:2 :project:p1 5";
+
+static ISONGraph buildCanonicalFixture(int order) {
+    ISONGraph g("fixture");
+    std::vector<std::tuple<std::string, std::string, Properties>> nodes = {
+        {"company", "acme", {{"name", "Acme Corp"}}},
+        {"person", "1", {{"name", "Alice"}, {"age", "30"}}},
+        {"person", "10", {{"name", "Jax"}, {"age", "22"}}},
+        {"person", "2", {{"name", "Bob"}, {"age", "25"}}},
+        {"project", "p1", {{"name", "Alpha"}, {"tag", "a|b"}}},
+    };
+    std::vector<std::tuple<std::string, NodeRef, NodeRef, Properties>> edges = {
+        {"KNOWS", {"person", "10"}, {"person", "1"}, {{"since", "2021"}}},
+        {"KNOWS", {"person", "1"}, {"person", "2"}, {{"since", "2020"}}},
+        {"WORKS_AT", {"person", "1"}, {"company", "acme"}, {{"role", "Lead Engineer"}}},
+        {"WORKS_ON", {"person", "2"}, {"project", "p1"}, {{"hours", "5"}}},
+        {"WORKS_ON", {"person", "10"}, {"project", "p1"}, {{"hours", "3"}}},
+    };
+    if (order != 0) {
+        std::reverse(nodes.begin(), nodes.end());
+        std::reverse(edges.begin(), edges.end());
+    }
+    for (const auto& [t, i, props] : nodes) g.addNode(t, i, props);
+    for (const auto& [rel, s, t, props] : edges) g.addEdge(rel, s, t, props);
+    return g;
+}
+
+TEST(to_ison_independent_of_insertion_order) {
+    assert(buildCanonicalFixture(0).toIson() == buildCanonicalFixture(1).toIson());
+}
+
+TEST(to_isonl_independent_of_insertion_order) {
+    assert(buildCanonicalFixture(0).toIsonl() == buildCanonicalFixture(1).toIsonl());
+}
+
+TEST(to_ison_matches_golden_fixture) {
+    assert(buildCanonicalFixture(0).toIson() == CANONICAL_GOLDEN_ISON);
+    assert(buildCanonicalFixture(1).toIson() == CANONICAL_GOLDEN_ISON);
+}
+
+TEST(to_isonl_matches_golden_fixture) {
+    assert(buildCanonicalFixture(0).toIsonl() == CANONICAL_GOLDEN_ISONL);
+    assert(buildCanonicalFixture(1).toIsonl() == CANONICAL_GOLDEN_ISONL);
+}
+
+TEST(ordinal_not_numeric_sort) {
+    // "1" < "10" < "2" ordinally.
+    std::string ison = buildCanonicalFixture(0).toIson();
+    size_t start = ison.find("nodes.person\n") + std::string("nodes.person\n").size();
+    size_t end = ison.find("\n\n", start);
+    std::string personBlock = ison.substr(start, end - start);
+    std::istringstream iss(personBlock);
+    std::string line;
+    std::vector<std::string> ids;
+    std::getline(iss, line); // skip "id age name" header
+    while (std::getline(iss, line)) {
+        ids.push_back(line.substr(0, line.find(' ')));
+    }
+    assert(ids.size() == 3);
+    assert(ids[0] == "1");
+    assert(ids[1] == "10");
+    assert(ids[2] == "2");
+}
+
+TEST(roundtrip_preserves_canonical_form) {
+    ISONGraph g = buildCanonicalFixture(0);
+    ISONGraph reloaded = ISONGraph::fromIson(g.toIson());
+    assert(reloaded.toIson() == g.toIson());
+}
+
+// =============================================================================
 // Main
 // =============================================================================
 
@@ -817,6 +937,14 @@ int main() {
     RUN_TEST(fluent_filter);
     RUN_TEST(start_method);
     RUN_TEST(collect_nodes);
+
+    // Canonical serialization tests
+    RUN_TEST(to_ison_independent_of_insertion_order);
+    RUN_TEST(to_isonl_independent_of_insertion_order);
+    RUN_TEST(to_ison_matches_golden_fixture);
+    RUN_TEST(to_isonl_matches_golden_fixture);
+    RUN_TEST(ordinal_not_numeric_sort);
+    RUN_TEST(roundtrip_preserves_canonical_form);
 
     std::cout << "\n=== Results ===\n";
     std::cout << "Total: " << total << ", Passed: " << (total - failed)

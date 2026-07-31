@@ -138,6 +138,11 @@ const graph = new ISONGraph('name', false);
 | `ISONGraph.fromIson(text)` | Parse from ISON |
 | `ISONGraph.fromIsonl(text)` | Parse from ISONL |
 
+`toIson()`/`toIsonl()` are canonical: node/edge type blocks and rows are
+sorted (ordinal), so the same logical graph always serializes to the same
+bytes regardless of insertion order - safe for content-addressing or prompt
+caching, and byte-identical with every other ISONGraph language port.
+
 ## Types
 
 ```javascript

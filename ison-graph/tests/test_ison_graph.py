@@ -489,6 +489,127 @@ source target since
 
 
 # =============================================================================
+# Canonical Serialization Tests
+#
+# to_ison()/to_isonl() must be byte-identical for the same logical graph
+# regardless of insertion order (node type blocks, node rows, edge type
+# blocks, and edge rows are all sorted, ordinal string comparison). This is
+# what makes serialized output safe to content-address or prompt-cache: the
+# same graph always produces the same bytes.
+#
+# The golden fixture below is shared verbatim (as a literal string) across
+# every ISONGraph language port's test suite - Python, JS, TS, Rust, C++,
+# and C# - as the cross-language byte-identity contract. If this string
+# changes here, it must change in all six places together.
+# =============================================================================
+
+CANONICAL_GOLDEN_ISON = (
+    'nodes.company\n'
+    'id name\n'
+    'acme "Acme Corp"\n'
+    '\n'
+    'nodes.person\n'
+    'id age name\n'
+    '1 30 Alice\n'
+    '10 22 Jax\n'
+    '2 25 Bob\n'
+    '\n'
+    'nodes.project\n'
+    'id name tag\n'
+    'p1 Alpha "a|b"\n'
+    '\n'
+    'edges.KNOWS\n'
+    'source target since\n'
+    ':person:1 :person:2 2020\n'
+    ':person:10 :person:1 2021\n'
+    '\n'
+    'edges.WORKS_AT\n'
+    'source target role\n'
+    ':person:1 :company:acme "Lead Engineer"\n'
+    '\n'
+    'edges.WORKS_ON\n'
+    'source target hours\n'
+    ':person:10 :project:p1 3\n'
+    ':person:2 :project:p1 5'
+)
+
+CANONICAL_GOLDEN_ISONL = (
+    'nodes.company|id name|acme "Acme Corp"\n'
+    'nodes.person|id age name|1 30 Alice\n'
+    'nodes.person|id age name|10 22 Jax\n'
+    'nodes.person|id age name|2 25 Bob\n'
+    'nodes.project|id name tag|p1 Alpha "a|b"\n'
+    'edges.KNOWS|source target since|:person:1 :person:2 2020\n'
+    'edges.KNOWS|source target since|:person:10 :person:1 2021\n'
+    'edges.WORKS_AT|source target role|:person:1 :company:acme "Lead Engineer"\n'
+    'edges.WORKS_ON|source target hours|:person:10 :project:p1 3\n'
+    'edges.WORKS_ON|source target hours|:person:2 :project:p1 5'
+)
+
+
+def _build_canonical_fixture(order):
+    """Same logical graph built in forward (0) or reversed (1) insertion order."""
+    graph = ISONGraph('fixture')
+    nodes = [
+        ('company', 'acme', {'name': 'Acme Corp'}),
+        ('person', '1', {'name': 'Alice', 'age': '30'}),
+        ('person', '10', {'name': 'Jax', 'age': '22'}),
+        ('person', '2', {'name': 'Bob', 'age': '25'}),
+        ('project', 'p1', {'name': 'Alpha', 'tag': 'a|b'}),
+    ]
+    edges = [
+        ('KNOWS', ('person', '10'), ('person', '1'), {'since': '2021'}),
+        ('KNOWS', ('person', '1'), ('person', '2'), {'since': '2020'}),
+        ('WORKS_AT', ('person', '1'), ('company', 'acme'), {'role': 'Lead Engineer'}),
+        ('WORKS_ON', ('person', '2'), ('project', 'p1'), {'hours': '5'}),
+        ('WORKS_ON', ('person', '10'), ('project', 'p1'), {'hours': '3'}),
+    ]
+    seq_n = nodes if order == 0 else list(reversed(nodes))
+    seq_e = edges if order == 0 else list(reversed(edges))
+    for node_type, node_id, props in seq_n:
+        graph.add_node(node_type, node_id, **props)
+    for rel, source, target, props in seq_e:
+        graph.add_edge(rel, source, target, **props)
+    return graph
+
+
+class TestCanonicalSerialization:
+    """Serialization is insertion-order-independent and matches the shared
+    cross-language golden fixture exactly."""
+
+    def test_to_ison_independent_of_insertion_order(self):
+        a = _build_canonical_fixture(0)
+        b = _build_canonical_fixture(1)
+        assert a.to_ison() == b.to_ison()
+
+    def test_to_isonl_independent_of_insertion_order(self):
+        a = _build_canonical_fixture(0)
+        b = _build_canonical_fixture(1)
+        assert a.to_isonl() == b.to_isonl()
+
+    def test_to_ison_matches_golden_fixture(self):
+        assert _build_canonical_fixture(0).to_ison() == CANONICAL_GOLDEN_ISON
+        assert _build_canonical_fixture(1).to_ison() == CANONICAL_GOLDEN_ISON
+
+    def test_to_isonl_matches_golden_fixture(self):
+        assert _build_canonical_fixture(0).to_isonl() == CANONICAL_GOLDEN_ISONL
+        assert _build_canonical_fixture(1).to_isonl() == CANONICAL_GOLDEN_ISONL
+
+    def test_ordinal_not_numeric_sort(self):
+        # "1" < "10" < "2" ordinally - the golden fixture already locks this
+        # in, but assert it explicitly so the invariant reads as intentional.
+        ison = _build_canonical_fixture(0).to_ison()
+        person_block = ison.split('nodes.person\n')[1].split('\n\n')[0]
+        ids = [line.split(' ')[0] for line in person_block.splitlines()[1:]]
+        assert ids == ['1', '10', '2']
+
+    def test_roundtrip_preserves_canonical_form(self):
+        graph = _build_canonical_fixture(0)
+        reloaded = ISONGraph.from_ison(graph.to_ison())
+        assert reloaded.to_ison() == graph.to_ison()
+
+
+# =============================================================================
 # Fluent API Tests
 # =============================================================================
 

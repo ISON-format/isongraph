@@ -178,6 +178,34 @@ public sealed partial class ISONGraph
     ///     source target {property fields...}
     ///     :type:id :type:id {property values...}
     /// </summary>
+    /// <summary>Node rows within a type block, sorted by Id (ordinal string compare).</summary>
+    private static List<Node> SortedNodes(List<Node> typeNodes)
+    {
+        var sorted = new List<Node>(typeNodes);
+        sorted.Sort((a, b) => string.CompareOrdinal(a.Id, b.Id));
+        return sorted;
+    }
+
+    /// <summary>
+    /// Edge rows within a rel_type block, sorted by
+    /// (Source.Type, Source.Id, Target.Type, Target.Id) - ordinal.
+    /// </summary>
+    private static List<Edge> SortedEdges(List<Edge> edges)
+    {
+        var sorted = new List<Edge>(edges);
+        sorted.Sort((a, b) =>
+        {
+            var cmp = string.CompareOrdinal(a.Source.Type, b.Source.Type);
+            if (cmp != 0) return cmp;
+            cmp = string.CompareOrdinal(a.Source.Id, b.Source.Id);
+            if (cmp != 0) return cmp;
+            cmp = string.CompareOrdinal(a.Target.Type, b.Target.Type);
+            if (cmp != 0) return cmp;
+            return string.CompareOrdinal(a.Target.Id, b.Target.Id);
+        });
+        return sorted;
+    }
+
     public string ToIson()
     {
         var blocks = new List<string>();
@@ -188,7 +216,7 @@ public sealed partial class ISONGraph
 
         foreach (var nodeType in sortedNodeTypes)
         {
-            var typeNodes = _nodeOrder[nodeType];
+            var typeNodes = SortedNodes(_nodeOrder[nodeType]);
             if (typeNodes.Count == 0)
                 continue;
 
@@ -225,7 +253,7 @@ public sealed partial class ISONGraph
 
         foreach (var relType in sortedEdgeTypes)
         {
-            var relEdges = _edgesByType[relType];
+            var relEdges = SortedEdges(_edgesByType[relType]);
             if (relEdges.Count == 0)
                 continue;
 
@@ -267,23 +295,34 @@ public sealed partial class ISONGraph
     {
         var lines = new List<string>();
 
-        foreach (var node in Nodes())
+        // Serialize nodes (type blocks, then rows, both sorted).
+        var sortedNodeTypes = new List<string>(_nodeTypeOrder);
+        sortedNodeTypes.Sort(OrdinalComparer);
+
+        foreach (var nodeType in sortedNodeTypes)
         {
-            var propKeys = new List<string>(node.Properties.Keys);
-            propKeys.Sort(OrdinalComparer);
+            foreach (var node in SortedNodes(_nodeOrder[nodeType]))
+            {
+                var propKeys = new List<string>(node.Properties.Keys);
+                propKeys.Sort(OrdinalComparer);
 
-            var fields = new List<string> { "id" };
-            fields.AddRange(propKeys);
-            var values = new List<string> { QuoteValue(node.Id) };
-            foreach (var key in propKeys)
-                values.Add(QuoteValue(node.Properties[key]));
+                var fields = new List<string> { "id" };
+                fields.AddRange(propKeys);
+                var values = new List<string> { QuoteValue(node.Id) };
+                foreach (var key in propKeys)
+                    values.Add(QuoteValue(node.Properties[key]));
 
-            lines.Add($"nodes.{node.Type}|{string.Join(" ", fields)}|{string.Join(" ", values)}");
+                lines.Add($"nodes.{node.Type}|{string.Join(" ", fields)}|{string.Join(" ", values)}");
+            }
         }
 
-        foreach (var relType in _edgeTypeOrder)
+        // Serialize edges (type blocks, then rows, both sorted).
+        var sortedEdgeTypes = new List<string>(_edgeTypeOrder);
+        sortedEdgeTypes.Sort(OrdinalComparer);
+
+        foreach (var relType in sortedEdgeTypes)
         {
-            foreach (var edge in _edgesByType[relType])
+            foreach (var edge in SortedEdges(_edgesByType[relType]))
             {
                 var propKeys = new List<string>(edge.Properties.Keys);
                 propKeys.Sort(OrdinalComparer);

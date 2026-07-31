@@ -629,6 +629,13 @@ except NodeNotFoundError:
 | `from_isonl(text, name)` | ISONGraph | Parse ISONL (classmethod) |
 | `parse(text, name)` | ISONGraph | Alias for from_ison |
 
+`to_ison()`/`to_isonl()` are canonical: node type blocks, node rows, edge
+type blocks, and edge rows are all sorted (ordinal string comparison), so
+the same logical graph always serializes to the same bytes regardless of
+insertion order - safe for content-addressing or prompt caching. Sort order
+is ordinal, not numeric (`"1" < "10" < "2"`), and matches every other
+ISONGraph language port byte-for-byte.
+
 #### Query Methods
 
 | Method | Returns | Description |

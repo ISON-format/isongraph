@@ -149,6 +149,11 @@ ISONGraph graph("name", false);    // Undirected graph
 | `toIson()` | Serialize to ISON |
 | `toIsonl()` | Serialize to ISONL |
 
+Output is canonical: node/edge type blocks and rows are sorted (ordinal),
+so the same logical graph always serializes to the same bytes regardless
+of insertion order - byte-identical with every other ISONGraph language
+port.
+
 ### Types
 
 ```cpp

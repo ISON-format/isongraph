@@ -520,6 +520,114 @@ describe('ISONGraph', () => {
   });
 });
 
+// =============================================================================
+// Canonical Serialization
+//
+// toIson()/toIsonl() must be byte-identical for the same logical graph
+// regardless of insertion order (node type blocks, node rows, edge type
+// blocks, and edge rows are all sorted, ordinal string comparison). The
+// golden fixture below is shared verbatim across every ISONGraph language
+// port's test suite (Python, JS, TS, Rust, C++, C#) as the cross-language
+// byte-identity contract - if it changes here, it must change everywhere.
+// =============================================================================
+
+const CANONICAL_GOLDEN_ISON =
+  'nodes.company\n' +
+  'id name\n' +
+  'acme "Acme Corp"\n' +
+  '\n' +
+  'nodes.person\n' +
+  'id age name\n' +
+  '1 30 Alice\n' +
+  '10 22 Jax\n' +
+  '2 25 Bob\n' +
+  '\n' +
+  'nodes.project\n' +
+  'id name tag\n' +
+  'p1 Alpha "a|b"\n' +
+  '\n' +
+  'edges.KNOWS\n' +
+  'source target since\n' +
+  ':person:1 :person:2 2020\n' +
+  ':person:10 :person:1 2021\n' +
+  '\n' +
+  'edges.WORKS_AT\n' +
+  'source target role\n' +
+  ':person:1 :company:acme "Lead Engineer"\n' +
+  '\n' +
+  'edges.WORKS_ON\n' +
+  'source target hours\n' +
+  ':person:10 :project:p1 3\n' +
+  ':person:2 :project:p1 5';
+
+const CANONICAL_GOLDEN_ISONL =
+  'nodes.company|id name|acme "Acme Corp"\n' +
+  'nodes.person|id age name|1 30 Alice\n' +
+  'nodes.person|id age name|10 22 Jax\n' +
+  'nodes.person|id age name|2 25 Bob\n' +
+  'nodes.project|id name tag|p1 Alpha "a|b"\n' +
+  'edges.KNOWS|source target since|:person:1 :person:2 2020\n' +
+  'edges.KNOWS|source target since|:person:10 :person:1 2021\n' +
+  'edges.WORKS_AT|source target role|:person:1 :company:acme "Lead Engineer"\n' +
+  'edges.WORKS_ON|source target hours|:person:10 :project:p1 3\n' +
+  'edges.WORKS_ON|source target hours|:person:2 :project:p1 5';
+
+function buildCanonicalFixture(order) {
+  const g = new ISONGraph('fixture');
+  const nodes = [
+    ['company', 'acme', { name: 'Acme Corp' }],
+    ['person', '1', { name: 'Alice', age: '30' }],
+    ['person', '10', { name: 'Jax', age: '22' }],
+    ['person', '2', { name: 'Bob', age: '25' }],
+    ['project', 'p1', { name: 'Alpha', tag: 'a|b' }],
+  ];
+  const edges = [
+    ['KNOWS', ['person', '10'], ['person', '1'], { since: '2021' }],
+    ['KNOWS', ['person', '1'], ['person', '2'], { since: '2020' }],
+    ['WORKS_AT', ['person', '1'], ['company', 'acme'], { role: 'Lead Engineer' }],
+    ['WORKS_ON', ['person', '2'], ['project', 'p1'], { hours: '5' }],
+    ['WORKS_ON', ['person', '10'], ['project', 'p1'], { hours: '3' }],
+  ];
+  const seqN = order === 0 ? nodes : [...nodes].reverse();
+  const seqE = order === 0 ? edges : [...edges].reverse();
+  for (const [t, i, props] of seqN) g.addNode(t, i, props);
+  for (const [rel, s, t, props] of seqE) g.addEdge(rel, s, t, props);
+  return g;
+}
+
+describe('Canonical Serialization', () => {
+  it('toIson is independent of insertion order', () => {
+    expect(buildCanonicalFixture(0).toIson()).toBe(buildCanonicalFixture(1).toIson());
+  });
+
+  it('toIsonl is independent of insertion order', () => {
+    expect(buildCanonicalFixture(0).toIsonl()).toBe(buildCanonicalFixture(1).toIsonl());
+  });
+
+  it('toIson matches the shared cross-language golden fixture', () => {
+    expect(buildCanonicalFixture(0).toIson()).toBe(CANONICAL_GOLDEN_ISON);
+    expect(buildCanonicalFixture(1).toIson()).toBe(CANONICAL_GOLDEN_ISON);
+  });
+
+  it('toIsonl matches the shared cross-language golden fixture', () => {
+    expect(buildCanonicalFixture(0).toIsonl()).toBe(CANONICAL_GOLDEN_ISONL);
+    expect(buildCanonicalFixture(1).toIsonl()).toBe(CANONICAL_GOLDEN_ISONL);
+  });
+
+  it('sorts ids ordinally, not numerically ("1" < "10" < "2")', () => {
+    const ison = buildCanonicalFixture(0).toIson();
+    const personBlock = ison.split('nodes.person\n')[1].split('\n\n')[0];
+    const ids = personBlock.split('\n').slice(1).map(line => line.split(' ')[0]);
+    expect(ids).toEqual(['1', '10', '2']);
+  });
+
+  it('round-trip preserves canonical form', () => {
+    const g = buildCanonicalFixture(0);
+    const reloaded = ISONGraph.fromIson(g.toIson());
+    expect(reloaded.toIson()).toBe(g.toIson());
+  });
+});
+
 describe('Node', () => {
   it('should create node with properties', () => {
     const node = new Node('person', 1, { name: 'Alice' });
