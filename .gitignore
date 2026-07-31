@@ -199,3 +199,8 @@ tools/
 # Website (deployed separately)
 # ============================================
 website-graph/
+
+# ============================================
+# In-progress / not yet released (embeddings packages, benchmarks)
+# ============================================
+hiding_emb/

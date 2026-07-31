@@ -1,0 +1,117 @@
+nodes.Document
+id title author category publishedAt pages citations views
+doc_1 "Vector Databases Explained" "Bob Smith" tutorial 2024-02-02 11 3 150
+doc_2 "Knowledge Graph Architecture" "Carol White" whitepaper 2024-03-03 12 6 200
+doc_3 "RAG Systems Deep Dive" "David Chen" case-study 2024-04-04 13 9 250
+doc_4 "Embedding Models Comparison" "Eva Martinez" documentation 2024-05-05 14 12 300
+doc_5 "Semantic Search Patterns" "Frank Brown" blog 2024-06-06 15 15 350
+doc_6 "Graph Algorithms Guide" "Grace Lee" report 2024-07-07 16 18 400
+doc_7 "Machine Learning at Scale" "Henry Wilson" analysis 2024-08-08 17 21 450
+doc_8 "Real-time Analytics" "Ivy Taylor" research 2024-09-09 18 24 500
+doc_9 "Data Pipeline Design" "Jack Anderson" tutorial 2024-10-10 19 27 550
+doc_10 "Microservices Architecture" "Kate Thomas" whitepaper 2024-11-11 20 30 600
+doc_11 "API Design Best Practices" "Leo Moore" case-study 2024-12-12 21 33 650
+doc_12 "Cloud Native Development" "Maya Jackson" documentation 2024-01-13 22 36 700
+doc_13 "DevOps Transformation" "Noah Martin" blog 2024-02-14 23 39 750
+doc_14 "Security Best Practices" "Olivia Garcia" report 2024-03-15 24 42 800
+doc_15 "Performance Optimization" "Paul Davis" analysis 2024-04-16 25 45 850
+doc_16 "Scalability Patterns" "Quinn Miller" research 2024-05-17 26 48 900
+doc_17 "Data Modeling Techniques" "Rachel Jones" tutorial 2024-06-18 27 51 950
+
+nodes.Concept
+id name domain importance
+concept_1 "Neural Networks" "Data Science" high
+concept_2 "Knowledge Graphs" "Software Engineering" high
+concept_3 "Vector Embeddings" "Cloud Computing" high
+concept_4 "Graph Databases" Security high
+concept_5 "Semantic Search" DevOps high
+concept_6 "Machine Learning" AI high
+concept_7 "Deep Learning" Analytics high
+concept_8 "Natural Language Processing" "Big Data" high
+concept_9 "Computer Vision" Databases high
+concept_10 "Reinforcement Learning" "Machine Learning" high
+concept_11 "Transfer Learning" "Data Science" high
+concept_12 "Federated Learning" "Software Engineering" high
+concept_13 AutoML "Cloud Computing" high
+concept_14 MLOps Security high
+concept_15 "Data Engineering" DevOps high
+concept_16 "Feature Engineering" AI medium
+concept_17 "Model Serving" Analytics medium
+concept_18 "A/B Testing" "Big Data" medium
+concept_19 Experimentation Databases medium
+concept_20 "Data Quality" "Machine Learning" medium
+concept_21 "Data Governance" "Data Science" medium
+concept_22 "Data Lineage" "Software Engineering" medium
+concept_23 "Metadata Management" "Cloud Computing" medium
+concept_24 "Data Catalog" Security medium
+concept_25 "Data Discovery" DevOps medium
+concept_26 "ETL Pipelines" AI medium
+concept_27 "Stream Processing" Analytics medium
+concept_28 "Batch Processing" "Big Data" medium
+concept_29 "Real-time Analytics" Databases medium
+concept_30 OLAP "Machine Learning" medium
+concept_31 "Data Warehousing" "Data Science" medium
+concept_32 "Data Lakes" "Software Engineering" medium
+concept_34 "Data Mesh" Security medium
+concept_35 "Data Fabric" DevOps medium
+concept_37 "Link Prediction" Analytics low
+concept_38 "Community Detection" "Big Data" low
+concept_40 "Path Finding" "Machine Learning" low
+concept_41 "Similarity Search" "Data Science" low
+concept_42 "Approximate Nearest Neighbors" "Software Engineering" low
+concept_43 "HNSW Index" "Cloud Computing" low
+concept_45 "Product Quantization" DevOps low
+concept_48 "Dot Product" "Big Data" low
+
+edges.MENTIONS
+source target relevance
+:Document:doc_1 :Concept:concept_2 0.892
+:Document:doc_1 :Concept:concept_15 0.634
+:Document:doc_1 :Concept:concept_28 0.607
+:Document:doc_2 :Concept:concept_3 0.667
+:Document:doc_2 :Concept:concept_16 0.636
+:Document:doc_2 :Concept:concept_29 0.694
+:Document:doc_2 :Concept:concept_42 0.654
+:Document:doc_3 :Concept:concept_4 0.768
+:Document:doc_3 :Concept:concept_17 0.61
+:Document:doc_4 :Concept:concept_5 0.828
+:Document:doc_4 :Concept:concept_18 0.698
+:Document:doc_4 :Concept:concept_31 0.67
+:Document:doc_5 :Concept:concept_6 0.841
+:Document:doc_5 :Concept:concept_19 0.676
+:Document:doc_5 :Concept:concept_32 0.612
+:Document:doc_5 :Concept:concept_45 0.665
+:Document:doc_6 :Concept:concept_7 0.636
+:Document:doc_6 :Concept:concept_20 0.615
+:Document:doc_7 :Concept:concept_8 0.641
+:Document:doc_7 :Concept:concept_21 0.634
+:Document:doc_7 :Concept:concept_34 0.644
+:Document:doc_8 :Concept:concept_9 0.612
+:Document:doc_8 :Concept:concept_22 0.681
+:Document:doc_8 :Concept:concept_35 0.659
+:Document:doc_8 :Concept:concept_48 0.683
+:Document:doc_9 :Concept:concept_10 0.634
+:Document:doc_9 :Concept:concept_23 0.646
+:Document:doc_10 :Concept:concept_11 0.684
+:Document:doc_10 :Concept:concept_24 0.653
+:Document:doc_10 :Concept:concept_37 0.632
+:Document:doc_11 :Concept:concept_12 0.879
+:Document:doc_11 :Concept:concept_25 0.684
+:Document:doc_11 :Concept:concept_38 0.682
+:Document:doc_11 :Concept:concept_1 0.601
+:Document:doc_12 :Concept:concept_13 0.819
+:Document:doc_12 :Concept:concept_26 0.606
+:Document:doc_13 :Concept:concept_14 0.77
+:Document:doc_13 :Concept:concept_27 0.66
+:Document:doc_13 :Concept:concept_40 0.628
+:Document:doc_14 :Concept:concept_15 0.632
+:Document:doc_14 :Concept:concept_28 0.602
+:Document:doc_14 :Concept:concept_41 0.658
+:Document:doc_14 :Concept:concept_4 0.691
+:Document:doc_15 :Concept:concept_16 0.818
+:Document:doc_15 :Concept:concept_29 0.612
+:Document:doc_16 :Concept:concept_17 0.815
+:Document:doc_16 :Concept:concept_30 0.647
+:Document:doc_16 :Concept:concept_43 0.677
+:Document:doc_17 :Concept:concept_18 0.773
+:Document:doc_17 :Concept:concept_31 0.681
