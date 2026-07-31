@@ -38,6 +38,7 @@ Version: 1.0.0
 from __future__ import annotations
 
 import re
+import warnings
 from dataclasses import dataclass, field
 from typing import (
     Any, Dict, List, Optional, Set, Tuple,
@@ -1318,7 +1319,15 @@ class ISONGraph:
             props = {k: v for k, v in node_data.items() if k not in ("type", "id")}
             graph.add_node(node_type, node_id, **props)
 
-        # Parse edges
+        # Parse edges. ISONGraph is a simple graph: at most one edge per
+        # (rel_type, source, target) triple. A source dict/JSON payload
+        # with a repeated edge entry for the same triple - common when
+        # converting from an event-log-style export - is not an error;
+        # the repeat is skipped and a single UserWarning summarizes how
+        # many entries were dropped. To keep what made the repeats
+        # distinct, pre-aggregate them into one entry's properties before
+        # calling from_dict().
+        skipped_duplicates = 0
         for edge_data in data.get("edges", []):
             rel_type = edge_data.get("rel_type", edge_data.get("type", "RELATED_TO"))
 
@@ -1337,7 +1346,22 @@ class ISONGraph:
                 if k not in ("rel_type", "type", "source", "target", "properties"):
                     props[k] = v
 
+            if graph.has_edge(rel_type, source, target):
+                skipped_duplicates += 1
+                continue
+
             graph.add_edge(rel_type, source, target, **props)
+
+        if skipped_duplicates:
+            warnings.warn(
+                f"from_dict() skipped {skipped_duplicates} duplicate edge "
+                f"entr{'y' if skipped_duplicates == 1 else 'ies'} (ISONGraph "
+                f"is a simple graph: at most one edge per "
+                f"(rel_type, source, target) triple). Pre-aggregate repeats "
+                f"into one entry's properties before conversion to keep "
+                f"that data.",
+                stacklevel=2,
+            )
 
         return graph
 

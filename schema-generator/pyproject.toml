@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ison-schema-generator"
+version = "1.0.0"
+description = "Automatically generate ISONGraph schemas from existing graph data"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    { name = "Mahesh Vaikri", email = "mahesh.vaikri.ai@gmail.com" }
+]
+keywords = [
+    "isongraph",
+    "schema",
+    "schema-generation",
+    "schema-inference",
+    "data-analysis",
+    "codegen",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Code Generators",
+]
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0",
+    "pytest-cov>=6.0",
+]
+
+[project.scripts]
+ison-schema-gen = "schema_generator.cli:main"
+
+[project.urls]
+Homepage = "https://graph.ison.dev"
+Repository = "https://github.com/isongraph/isongraph"
+Issues = "https://github.com/isongraph/isongraph/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]

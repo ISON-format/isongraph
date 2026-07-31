@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ison-converters"
+version = "1.0.0"
+description = "Convert between ISONGraph and GraphML, RDF, CSV, Cypher and DOT"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    { name = "Mahesh Vaikri", email = "mahesh.vaikri.ai@gmail.com" }
+]
+keywords = [
+    "isongraph",
+    "graphml",
+    "rdf",
+    "cypher",
+    "neo4j",
+    "graphviz",
+    "dot",
+    "csv",
+    "graph-conversion",
+    "interop",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "ison-graph>=1.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0",
+    "pytest-cov>=6.0",
+]
+
+[project.scripts]
+ison-convert = "converters.cli:main"
+
+[project.urls]
+Homepage = "https://graph.ison.dev"
+Repository = "https://github.com/isongraph/isongraph"
+Issues = "https://github.com/isongraph/isongraph/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

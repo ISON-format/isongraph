@@ -841,5 +841,56 @@ class TestSchemaDefaults:
         assert edge.properties['weight'] == 1
 
 
+# =============================================================================
+# from_dict Duplicate Edge Tests
+#
+# ISONGraph is a simple graph: at most one edge per (rel_type, source,
+# target) triple. A source dict/JSON payload with a repeated edge entry
+# is not an error; the repeat is skipped and a single UserWarning
+# summarizes how many were dropped instead of crashing the whole import.
+# =============================================================================
+
+class TestFromDictDuplicateEdges:
+    def test_duplicate_edge_is_skipped_with_warning(self):
+        data = {
+            "nodes": [
+                {"type": "person", "id": "alice"},
+                {"type": "person", "id": "bob"},
+            ],
+            "edges": [
+                {"rel_type": "KNOWS", "source": {"type": "person", "id": "alice"},
+                 "target": {"type": "person", "id": "bob"}},
+                {"rel_type": "KNOWS", "source": {"type": "person", "id": "alice"},
+                 "target": {"type": "person", "id": "bob"}},
+            ],
+        }
+
+        with pytest.warns(UserWarning, match="duplicate edge"):
+            graph = ISONGraph.from_dict(data, name="dedup-test")
+
+        assert graph.edge_count() == 1
+        assert graph.has_edge("KNOWS", ("person", "alice"), ("person", "bob"))
+
+    def test_no_warning_without_duplicates(self):
+        import warnings
+
+        data = {
+            "nodes": [
+                {"type": "person", "id": "alice"},
+                {"type": "person", "id": "bob"},
+            ],
+            "edges": [
+                {"rel_type": "KNOWS", "source": {"type": "person", "id": "alice"},
+                 "target": {"type": "person", "id": "bob"}},
+            ],
+        }
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            graph = ISONGraph.from_dict(data, name="no-dupes")
+
+        assert graph.edge_count() == 1
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
