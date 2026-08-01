@@ -120,13 +120,20 @@ class SchemaGenerator:
 
         schema = GraphSchema(name=name)
 
+        # Node/edge types and their fields are sorted (ordinal string
+        # comparison) rather than emitted in first-seen order, so the
+        # same logical data always generates the same schema regardless
+        # of how nodes/edges/fields happened to be ordered in the input -
+        # matching the canonical-serialization guarantee ison-graph
+        # itself makes for to_ison()/to_isonl().
+
         # Generate node type schemas
-        for type_name, stats in analyzer.get_node_stats().items():
+        for type_name, stats in sorted(analyzer.get_node_stats().items()):
             node_schema = self._generate_node_schema(type_name, stats)
             schema.node_types.append(node_schema)
 
         # Generate edge type schemas
-        for type_name, stats in analyzer.get_edge_stats().items():
+        for type_name, stats in sorted(analyzer.get_edge_stats().items()):
             edge_schema = self._generate_edge_schema(type_name, stats)
             schema.edge_types.append(edge_schema)
 
@@ -140,7 +147,7 @@ class SchemaGenerator:
         """Generate schema for a node type."""
         node_schema = NodeTypeSchema(name=type_name)
 
-        for field_name, field_stats in stats.fields.items():
+        for field_name, field_stats in sorted(stats.fields.items()):
             field_schema = self._generate_field_schema(field_stats)
             node_schema.fields.append(field_schema)
 
@@ -154,15 +161,15 @@ class SchemaGenerator:
         """Generate schema for an edge type."""
         edge_schema = EdgeTypeSchema(
             name=type_name,
-            source_types=list(stats.source_types),
-            target_types=list(stats.target_types)
+            source_types=sorted(stats.source_types),
+            target_types=sorted(stats.target_types)
         )
 
         # Detect self-loop potential
         if stats.source_types == stats.target_types and len(stats.source_types) == 1:
             edge_schema.no_self_loop = True
 
-        for field_name, field_stats in stats.fields.items():
+        for field_name, field_stats in sorted(stats.fields.items()):
             field_schema = self._generate_field_schema(field_stats)
             edge_schema.fields.append(field_schema)
 
@@ -187,13 +194,15 @@ class SchemaGenerator:
             if stats.max_length is not None:
                 field_schema.max_length = stats.max_length
 
-        # Add pattern
+        # Add pattern. patterns/unique_values are sets, whose iteration
+        # order depends on hash randomization - sort so the same data
+        # always produces the same generated schema across runs.
         if self.infer_patterns and stats.patterns:
-            field_schema.pattern = list(stats.patterns)[0]
+            field_schema.pattern = sorted(stats.patterns)[0]
 
         # Add enum
         if self.infer_enums and stats.is_enum:
-            field_schema.enum = list(stats.unique_values)
+            field_schema.enum = sorted(stats.unique_values, key=str)
 
         return field_schema
 

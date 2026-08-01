@@ -240,6 +240,122 @@ class TestSchemaGenerator:
         assert schema.edge_types == []
 
 
+# =============================================================================
+# Canonical (Order-Independent) Generation Tests
+#
+# ison-graph guarantees to_ison()/to_isonl() output is canonical: the same
+# logical graph always serializes to the same bytes regardless of
+# construction order (sorted, ordinal string comparison). Schema generation
+# should make the same guarantee - the same logical data should always
+# generate the same schema code, regardless of what order nodes/edges/
+# fields happened to appear in the source JSON, and regardless of Python's
+# per-process hash randomization (node/edge type names and field names
+# come from dict keys; enum values and pattern names come from sets).
+# =============================================================================
+
+class TestCanonicalGeneration:
+    def _reordered_data(self):
+        """Two JSON payloads describing the same logical graph, with
+        node records, node fields, and edges all in different order."""
+        data_a = {
+            "nodes": [
+                {"type": "zebra", "id": "1", "z_field": 1, "a_field": 2},
+                {"type": "apple", "id": "1", "a_field": 1},
+            ],
+            "edges": [
+                {"rel_type": "ZZZ", "source": {"type": "zebra", "id": "1"},
+                 "target": {"type": "apple", "id": "1"}},
+                {"rel_type": "AAA", "source": {"type": "apple", "id": "1"},
+                 "target": {"type": "zebra", "id": "1"}},
+            ],
+        }
+        data_b = {
+            "nodes": [
+                {"type": "apple", "id": "1", "a_field": 1},
+                {"type": "zebra", "id": "1", "a_field": 2, "z_field": 1},
+            ],
+            "edges": [
+                {"rel_type": "AAA", "source": {"type": "apple", "id": "1"},
+                 "target": {"type": "zebra", "id": "1"}},
+                {"rel_type": "ZZZ", "source": {"type": "zebra", "id": "1"},
+                 "target": {"type": "apple", "id": "1"}},
+            ],
+        }
+        return data_a, data_b
+
+    def test_node_and_edge_type_order_is_sorted(self):
+        data_a, data_b = self._reordered_data()
+        generator = SchemaGenerator()
+
+        schema_a = generator.generate(data_a, name="x")
+        schema_b = generator.generate(data_b, name="x")
+
+        assert [nt.name for nt in schema_a.node_types] == ["apple", "zebra"]
+        assert [nt.name for nt in schema_b.node_types] == ["apple", "zebra"]
+        assert [et.name for et in schema_a.edge_types] == ["AAA", "ZZZ"]
+        assert [et.name for et in schema_b.edge_types] == ["AAA", "ZZZ"]
+
+    def test_field_order_is_sorted(self):
+        data_a, data_b = self._reordered_data()
+        generator = SchemaGenerator()
+
+        schema_a = generator.generate(data_a, name="x")
+        zebra = next(nt for nt in schema_a.node_types if nt.name == "zebra")
+        assert [f.name for f in zebra.fields] == ["a_field", "id", "z_field"]
+
+    @pytest.mark.parametrize("fmt", ["to_python", "to_dict"])
+    def test_generator_output_identical_regardless_of_input_order(self, fmt):
+        data_a, data_b = self._reordered_data()
+        generator = SchemaGenerator()
+
+        schema_a = generator.generate(data_a, name="x")
+        schema_b = generator.generate(data_b, name="x")
+
+        result_a = getattr(generator, fmt)(schema_a)
+        result_b = getattr(generator, fmt)(schema_b)
+        assert result_a == result_b
+
+    @pytest.mark.parametrize("fmt", [
+        SchemaFormatter.to_python,
+        SchemaFormatter.to_typescript,
+        SchemaFormatter.to_json,
+        SchemaFormatter.to_ison_schema,
+    ])
+    def test_formatter_output_identical_regardless_of_input_order(self, fmt):
+        data_a, data_b = self._reordered_data()
+        generator = SchemaGenerator()
+
+        schema_a = generator.generate(data_a, name="x")
+        schema_b = generator.generate(data_b, name="x")
+
+        assert fmt(schema_a) == fmt(schema_b)
+
+    def test_enum_values_are_sorted(self):
+        data = {"nodes": [
+            {"type": "t", "id": str(i), "tier": ["gold", "silver", "bronze"][i % 3]}
+            for i in range(10)
+        ], "edges": []}
+
+        schema = SchemaGenerator().generate(data, name="x")
+        tier_field = next(f for f in schema.node_types[0].fields if f.name == "tier")
+
+        assert tier_field.enum == sorted(tier_field.enum)
+
+    def test_source_target_types_are_sorted(self):
+        data = {"nodes": [], "edges": [
+            {"rel_type": "REL", "source": {"type": "zebra", "id": "1"},
+             "target": {"type": "apple", "id": "1"}},
+            {"rel_type": "REL", "source": {"type": "apple", "id": "1"},
+             "target": {"type": "banana", "id": "1"}},
+        ]}
+
+        schema = SchemaGenerator().generate(data, name="x")
+        rel = schema.edge_types[0]
+
+        assert rel.source_types == sorted(rel.source_types)
+        assert rel.target_types == sorted(rel.target_types)
+
+
 class TestGenerateSchemaConvenienceFunction:
     def test_python_output(self, sample_data):
         result = generate_schema(sample_data, name="x", output_format="python")
