@@ -17,6 +17,8 @@ from ison_graph import ISONGraph
 from converters.graphml import GraphMLConverter
 from converters.csv_converter import CSVConverter, Neo4jCSVConverter
 from converters.cypher import CypherConverter
+from converters.rdf import RDFConverter
+from converters.dot import DOTConverter
 
 
 # =============================================================================
@@ -428,6 +430,207 @@ class TestCypherConverter:
         # Labels starting with numbers should be prefixed
         escaped = converter._escape_label("123label")
         assert escaped[0].isalpha() or escaped[0] == "_"
+
+
+# =============================================================================
+# RDF Converter Tests
+# =============================================================================
+
+class TestRDFConverter:
+    """Tests for RDF/Turtle converter"""
+
+    @pytest.fixture
+    def converter(self):
+        return RDFConverter()
+
+    def test_converter_initialization(self, converter):
+        """Test converter initialization"""
+        assert converter.base_uri == "http://example.org/"
+        assert converter.include_properties is True
+
+    def test_to_turtle_basic(self, converter, sample_graph):
+        """Test basic conversion to Turtle"""
+        turtle = converter.to_turtle(sample_graph)
+
+        assert "@prefix" in turtle
+        assert "ex:person_alice" in turtle
+        assert "Alice Smith" in turtle
+
+    def test_to_turtle_contains_edges(self, converter, sample_graph):
+        """Test that edges are included as triples"""
+        turtle = converter.to_turtle(sample_graph)
+
+        assert "ex:WORKS_AT" in turtle
+        assert "ex:MANAGES" in turtle
+
+    def test_to_ntriples_basic(self, converter, sample_graph):
+        """Test basic conversion to N-Triples"""
+        ntriples = converter.to_ntriples(sample_graph)
+
+        assert "<http://example.org/person_alice>" in ntriples
+        assert ntriples.strip().endswith(" .")
+
+    def test_from_turtle_roundtrip_no_properties(self, converter):
+        """Edges without properties round-trip cleanly (no reification)"""
+        graph = ISONGraph(name="simple")
+        graph.add_node("person", "alice", name="Alice")
+        graph.add_node("person", "bob", name="Bob")
+        graph.add_edge("KNOWS", ("person", "alice"), ("person", "bob"))
+
+        turtle = converter.to_turtle(graph)
+        restored = converter.from_turtle(turtle, "restored")
+
+        assert restored.node_count() == graph.node_count()
+        assert restored.edge_count() == graph.edge_count()
+        assert restored.has_edge("KNOWS", ("person", "alice"), ("person", "bob"))
+
+    def test_from_turtle_preserves_node_properties(self, converter):
+        """Node properties survive a Turtle roundtrip"""
+        graph = ISONGraph(name="simple")
+        graph.add_node("person", "alice", name="Alice", age=30)
+
+        turtle = converter.to_turtle(graph)
+        restored = converter.from_turtle(turtle, "restored")
+
+        node = restored.get_node("person", "alice")
+        assert node.properties["name"] == "Alice"
+        assert node.properties["age"] == 30
+
+    def test_from_turtle_does_not_crash_on_edge_properties(self, converter, sample_graph):
+        """
+        Edges with properties are emitted as reified statements
+        (rdf:Statement / rdf:subject / rdf:predicate / rdf:object).
+        from_turtle() is a basic parser that doesn't fold these back
+        into edge properties - it must not crash on them, but the
+        restored graph legitimately contains extra nodes/edges for the
+        reified statements. This documents that known limitation rather
+        than asserting a full roundtrip.
+        """
+        turtle = converter.to_turtle(sample_graph)
+        restored = converter.from_turtle(turtle, "restored")
+
+        assert restored.node_count() > 0
+        assert restored.has_edge("WORKS_AT", ("person", "alice"), ("company", "acme"))
+
+    def test_empty_graph(self, converter, empty_graph):
+        """Test conversion of empty graph"""
+        turtle = converter.to_turtle(empty_graph)
+        restored = converter.from_turtle(turtle, "restored")
+
+        assert restored.node_count() == 0
+        assert restored.edge_count() == 0
+
+    def test_save_and_load(self, converter, tmp_path):
+        """Test saving and loading Turtle files"""
+        graph = ISONGraph(name="simple")
+        graph.add_node("person", "alice", name="Alice")
+
+        path = tmp_path / "test.ttl"
+        converter.save(graph, str(path))
+        assert path.exists()
+
+        loaded = converter.load(str(path))
+        assert loaded.node_count() == 1
+
+    def test_custom_base_uri(self, sample_graph):
+        """Test conversion with a custom base URI"""
+        converter = RDFConverter(base_uri="http://custom.example/")
+        turtle = converter.to_turtle(sample_graph)
+
+        assert "http://custom.example/" in turtle
+
+
+# =============================================================================
+# DOT Converter Tests
+# =============================================================================
+
+class TestDOTConverter:
+    """Tests for DOT/Graphviz converter"""
+
+    @pytest.fixture
+    def converter(self):
+        return DOTConverter()
+
+    def test_converter_initialization(self, converter):
+        """Test converter initialization"""
+        assert converter.label_property == "name"
+        assert converter.rankdir == "TB"
+
+    def test_to_dot_basic(self, converter, sample_graph):
+        """Test basic conversion to DOT"""
+        dot = converter.to_dot(sample_graph)
+
+        assert dot.startswith('digraph "test-graph" {')
+        assert dot.rstrip().endswith("}")
+        assert '"person:alice"' in dot
+        assert "Alice Smith" in dot
+
+    def test_to_dot_contains_edges(self, converter, sample_graph):
+        """Test that edges are included with the directed connector"""
+        dot = converter.to_dot(sample_graph)
+
+        assert '"person:alice" -> "company:acme"' in dot
+        assert 'label="WORKS_AT"' in dot
+
+    def test_to_dot_undirected_graph(self, converter):
+        """Undirected graphs use 'graph' and the '--' connector"""
+        graph = ISONGraph(name="undirected", directed=False)
+        graph.add_node("person", "alice")
+        graph.add_node("person", "bob")
+        graph.add_edge("KNOWS", ("person", "alice"), ("person", "bob"))
+
+        dot = converter.to_dot(graph)
+
+        assert dot.startswith('graph "undirected" {')
+        assert '"person:alice" -- "person:bob"' in dot
+
+    def test_to_dot_clustered(self, converter, sample_graph):
+        """Test clustered output groups nodes by type"""
+        dot = converter.to_dot_clustered(sample_graph)
+
+        assert "subgraph cluster_" in dot
+        assert 'label="person"' in dot
+
+    def test_default_shape_and_color_by_type(self, converter, sample_graph):
+        """Test that known node types get their default shape/color"""
+        dot = converter.to_dot(sample_graph)
+
+        assert "shape=ellipse" in dot
+        assert "#a8d5ba" in dot
+
+    def test_custom_shapes_and_colors(self, sample_graph):
+        """Test overriding shapes/colors for a node type"""
+        converter = DOTConverter(shapes={"person": "box"}, colors={"person": "#000000"})
+        dot = converter.to_dot(sample_graph)
+
+        assert "shape=box" in dot
+        assert "#000000" in dot
+
+    def test_escaping_special_characters(self, converter):
+        """Test that quotes and backslashes in labels are escaped"""
+        graph = ISONGraph(name="escaping")
+        graph.add_node("person", "alice", name='Say "hi"')
+
+        dot = converter.to_dot(graph)
+
+        assert '\\"hi\\"' in dot
+
+    def test_empty_graph(self, converter, empty_graph):
+        """Test conversion of empty graph"""
+        dot = converter.to_dot(empty_graph)
+
+        assert dot.startswith("digraph")
+        assert dot.rstrip().endswith("}")
+
+    def test_save(self, converter, sample_graph, tmp_path):
+        """Test saving DOT files"""
+        path = tmp_path / "test.dot"
+
+        converter.save(sample_graph, str(path))
+
+        assert path.exists()
+        content = path.read_text()
+        assert "digraph" in content
 
 
 # =============================================================================

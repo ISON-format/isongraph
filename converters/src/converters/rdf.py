@@ -179,6 +179,14 @@ class RDFConverter:
         """
         Convert Turtle string to ISONGraph.
 
+        This is a basic triple parser, not a full RDF/Turtle implementation:
+        it does not understand reified statements (the rdf:Statement /
+        rdf:subject / rdf:predicate / rdf:object pattern that to_turtle()
+        emits for edges with properties). Turtle produced by to_turtle()
+        for edges *without* properties round-trips cleanly; edges *with*
+        properties will have their reified statement parsed as extra
+        literal nodes/edges rather than folded back into edge properties.
+
         Args:
             turtle_string: Turtle format string
             name: Name for the resulting graph
@@ -257,7 +265,7 @@ class RDFConverter:
         # Add nodes to graph
         uri_to_ref = {}
         for uri, (node_type, node_id, properties) in nodes.items():
-            graph.add_node(node_type, node_id, properties)
+            graph.add_node(node_type, node_id, **properties)
             uri_to_ref[uri] = (node_type, node_id)
 
         # Add edges

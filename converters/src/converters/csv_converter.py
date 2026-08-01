@@ -255,9 +255,9 @@ class CSVConverter:
 
             # Ensure nodes exist
             if not graph.has_node(*source):
-                graph.add_node(source[0], source[1], {})
+                graph.add_node(source[0], source[1])
             if not graph.has_node(*target):
-                graph.add_node(target[0], target[1], {})
+                graph.add_node(target[0], target[1])
 
             if graph.has_edge(rel_type, source, target):
                 skipped_duplicates += 1

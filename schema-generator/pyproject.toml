@@ -49,3 +49,6 @@ Issues = "https://github.com/isongraph/isongraph/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
