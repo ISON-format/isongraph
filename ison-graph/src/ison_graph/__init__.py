@@ -32,7 +32,7 @@ Usage:
     graph = ISONGraph.load('social.isong')
 
 Author: Mahesh Vaikri
-Version: 1.0.0
+Version: 1.3.0
 """
 
 from __future__ import annotations
@@ -65,6 +65,12 @@ __author__ = "Mahesh Vaikri"
 
 NodeRef = Tuple[str, Union[int, str]]  # (type, id) e.g., ('person', 1)
 EdgeKey = Tuple[str, NodeRef, NodeRef]  # (rel_type, source, target)
+
+# Simple graphs identify an edge by the triple above; ison_graph.multigraph
+# appends an integer occurrence key. Storage and errors are shared, so they
+# are typed against whichever form the graph in hand uses.
+MultiEdgeKey = Tuple[str, NodeRef, NodeRef, int]
+AnyEdgeKey = Union[EdgeKey, MultiEdgeKey]
 
 
 # =============================================================================
@@ -175,7 +181,7 @@ class NodeNotFoundError(GraphError):
 
 class EdgeNotFoundError(GraphError):
     """Edge does not exist in graph"""
-    def __init__(self, edge_key: EdgeKey):
+    def __init__(self, edge_key: AnyEdgeKey):
         self.edge_key = edge_key
         super().__init__(f"Edge not found: {edge_key}")
 
@@ -189,7 +195,7 @@ class DuplicateNodeError(GraphError):
 
 class DuplicateEdgeError(GraphError):
     """Edge already exists"""
-    def __init__(self, edge_key: EdgeKey):
+    def __init__(self, edge_key: AnyEdgeKey):
         self.edge_key = edge_key
         super().__init__(f"Edge already exists: {edge_key}")
 
@@ -208,6 +214,76 @@ class InvalidIdentifierError(GraphError):
         super().__init__(
             f"{kind} must not contain ':' or '|': {value!r}"
         )
+
+
+class InvalidPropertyNameError(GraphError):
+    """A property name has no unambiguous ISON encoding.
+
+    Property names are emitted as ISON field names, and the format applies
+    quoting rules to values but not to names. A name containing a space
+    splits into two fields on reload, one containing ':' has the remainder
+    consumed as a type annotation, and '|', '"' or a backslash breaks
+    ISONL. All of these lose data silently, so they are refused here where
+    the mistake is still visible.
+
+    '.' is refused for a different reason: it is a working ISON feature
+    rather than a gap. ``a.b`` is a dot path, so a flat property is written
+    out as ``null`` by the canonical writer and comes back nested through
+    the legacy one. ISONGraph properties are flat, so it opts out of the
+    feature instead of silently reshaping or dropping data.
+
+    A leading '#' is refused because a field line starting with '#' is read
+    as a whole-line comment: the header disappears, the first data row is
+    taken as the header, and the entire block is lost without an error.
+    Only the first character matters - ``a#b`` round-trips fine - but field
+    order is chosen by the canonical writer's sort, not by the caller, and
+    '#' sorts ahead of letters, so any such name can end up line-initial.
+    """
+
+    #: Whitespace, ':', '|', '"' and '\' match what the ISONL writer
+    #: already rejects - the stricter of the two forms, and the direction
+    #: the format is heading. '.' is ISONGraph's own dot-path opt-out.
+    INVALID_CHARS = (' ', '\t', '\n', '\r', ':', '|', '"', '\\', '.')
+
+    #: Rejected only in first position; see the class docstring.
+    INVALID_PREFIXES = ('#',)
+
+    def __init__(self, kind: str, name: str):
+        self.kind = kind
+        self.name = name
+        super().__init__(
+            f"{kind} name {name!r} cannot be encoded: property names must "
+            f"not be empty, start with '#' (read as a comment, losing the "
+            f"whole block), or contain whitespace, ':', '|', '\"', '\\' or "
+            f"'.' (a dot path would not survive the round trip)."
+        )
+
+
+# =============================================================================
+# Format markers
+# =============================================================================
+
+#: Written by ison_graph.multigraph.MultiGraph into its serialized output.
+#: ISONGraph refuses to load anything carrying it: a multigraph holds
+#: parallel edges that a simple graph cannot represent, and loading it here
+#: would drop them.
+MULTIGRAPH_FORMAT = "ison-graph-multigraph-v1"
+
+_MULTIGRAPH_REJECTION = (
+    f"This is a {MULTIGRAPH_FORMAT} document, which may contain multiple "
+    f"edges per (rel_type, source, target) triple. ISONGraph is a simple "
+    f"graph and would silently drop them - load it with "
+    f"ison_graph.multigraph.MultiGraph instead."
+)
+
+
+def _reject_if_multigraph(doc: Document) -> None:
+    """Raise if a parsed document is marked as a multigraph."""
+    for block in doc.blocks:
+        if block.kind == "meta" and block.name == "graph":
+            for row in block.rows:
+                if row.get("format") == MULTIGRAPH_FORMAT:
+                    raise ValueError(_MULTIGRAPH_REJECTION)
 
 
 # =============================================================================
@@ -252,7 +328,7 @@ class ISONGraph:
         self._in_edges: Dict[NodeRef, List[Edge]] = defaultdict(list)
 
         # Edge uniqueness set
-        self._edge_set: Set[EdgeKey] = set()
+        self._edge_set: Set[AnyEdgeKey] = set()
 
     # =========================================================================
     # Node Operations
@@ -270,6 +346,19 @@ class ISONGraph:
         s = str(value)
         if ':' in s or '|' in s:
             raise InvalidIdentifierError(kind, s)
+
+    @staticmethod
+    def _check_property_names(kind: str, properties: Dict[str, Any]) -> None:
+        """Reject property names that cannot survive a serialization round trip.
+
+        Names become ISON field names, which the format does not quote; see
+        :class:`InvalidPropertyNameError` for what each character does.
+        """
+        bad = InvalidPropertyNameError.INVALID_CHARS
+        prefixes = InvalidPropertyNameError.INVALID_PREFIXES
+        for name in properties:
+            if not name or name.startswith(prefixes) or any(ch in name for ch in bad):
+                raise InvalidPropertyNameError(kind, name)
 
     def add_node(
         self,
@@ -294,6 +383,7 @@ class ISONGraph:
         """
         self._check_identifier('Node type', node_type)
         self._check_identifier('Node id', node_id)
+        self._check_property_names('Node property', properties)
 
         if node_id in self._nodes[node_type]:
             raise DuplicateNodeError((node_type, node_id))
@@ -420,6 +510,7 @@ class ISONGraph:
             DuplicateEdgeError: If edge already exists
         """
         self._check_identifier('Relationship type', rel_type)
+        self._check_property_names('Edge property', properties)
 
         # Validate nodes exist
         if not self.has_node(source[0], source[1]):
@@ -1203,6 +1294,7 @@ class ISONGraph:
         """
         graph = cls(name=name)
         doc = loads(text)
+        _reject_if_multigraph(doc)
 
         for block in doc.blocks:
             if block.kind == "nodes":
@@ -1234,6 +1326,7 @@ class ISONGraph:
         """Parse graph from ISONL format"""
         graph = cls(name=name)
         doc = loads_isonl(text)
+        _reject_if_multigraph(doc)
 
         # Same logic as from_ison since loads_isonl returns Document
         for block in doc.blocks:
@@ -1307,6 +1400,9 @@ class ISONGraph:
         Returns:
             ISONGraph instance
         """
+        if data.get("format") == MULTIGRAPH_FORMAT:
+            raise ValueError(_MULTIGRAPH_REJECTION)
+
         graph_name = name or data.get("name", "graph")
         directed = data.get("directed", True)
         graph = cls(name=graph_name, directed=directed)
@@ -1573,10 +1669,16 @@ __all__ = [
     'DuplicateNodeError',
     'DuplicateEdgeError',
     'InvalidIdentifierError',
+    'InvalidPropertyNameError',
+
+    # Format markers
+    'MULTIGRAPH_FORMAT',
 
     # Submodules
     'query',
     'schema',
+    'multigraph',
+    'structural',
 ]
 
 
@@ -1592,4 +1694,10 @@ def __getattr__(name: str):
     if name == 'schema':
         from . import schema
         return schema
+    if name == 'multigraph':
+        from . import multigraph
+        return multigraph
+    if name == 'structural':
+        from . import structural
+        return structural
     raise AttributeError(f"module 'ison_graph' has no attribute '{name}'")

@@ -916,6 +916,136 @@ schema = GraphSchema("social") \
     .no_orphans()     # All nodes must have at least one edge
 ```
 
+## Extensions (experimental, 1.3.0)
+
+Two opt-in modules that lift constraints of the core graph. Importing them
+changes nothing about `ISONGraph` itself — existing code is unaffected.
+
+> **Experimental.** Both are Python-only until the JS, TS, Rust, C++ and C#
+> ports implement the same on-disk format. Pin your version if you depend on
+> the serialized output.
+
+### MultiGraph — parallel edges
+
+`ISONGraph` is a simple graph: at most one edge per
+`(rel_type, source, target)`. `MultiGraph` widens that to
+`(rel_type, source, target, key)`, so the same relationship can be recorded
+more than once between the same pair — different time ranges, different
+provenance — without inventing synthetic relation types.
+
+```python
+from ison_graph.multigraph import MultiGraph
+
+mg = MultiGraph()
+mg.add_node('person', 1, name='Alice')
+mg.add_node('person', 2, name='Bob')
+
+mg.add_edge('KNOWS', ('person', 1), ('person', 2), since=2015)   # key=0
+mg.add_edge('KNOWS', ('person', 1), ('person', 2), since=2020)   # key=1
+
+mg.neighbors(('person', 1), 'KNOWS')                  # queried by real rel_type
+mg.edges_between(('person', 1), ('person', 2))        # [(0, edge), (1, edge)]
+mg.get_edge('KNOWS', ('person', 1), ('person', 2), key=1)
+mg.remove_edge('KNOWS', ('person', 1), ('person', 2), key=0)
+```
+
+- `key` defaults to `0`, so a single edge looks exactly like the simple-graph
+  case. Omit it and keys are handed out in order.
+- Relation types are stored verbatim — no `r_<encoded>_0` rewriting. "Verbatim"
+  means within the identifier rules below; it is not a promise that any string
+  is accepted.
+- `edges()` and `edges_between()` iterate in **insertion order**; serialized
+  output is canonically sorted.
+- Keys are monotonic. Removing one edge does not free its key; removing every
+  edge on a triple resets the counter to 0.
+
+Serialized output carries a `meta.graph` marker. `ISONGraph` refuses to load
+it rather than silently discarding the parallel edges:
+
+```python
+ISONGraph.from_ison(mg.to_ison())
+# ValueError: This is a ison-graph-multigraph-v1 document ...
+#             load it with ison_graph.multigraph.MultiGraph instead.
+```
+
+Emission is delegated to ison-py's canonical writer (ISONCS), so MultiGraph
+decides *ordering* and the ISON layer decides *bytes*. Column order is
+alphabetical and blocks are name-sorted — that is the canonical layout, not a
+MultiGraph choice.
+
+### ProtectedGraph — structural fields cannot be shadowed
+
+A node's identity is `(type, id)`; an edge's is
+`(rel_type, source, target[, key])`. In a plain `ISONGraph` a property of the
+same name rides along and wins on reload:
+
+```python
+g = ISONGraph()
+g.add_node('person', 1, type='villain')
+ISONGraph.from_dict(g.to_dict()).node_types()   # ['villain'] — identity lost
+```
+
+`ProtectedGraph` rejects those properties at every boundary and hands out
+read-only property views, so the only route to a change is a validating
+update method:
+
+```python
+from ison_graph.structural import ProtectedGraph
+
+g = ProtectedGraph()
+g.add_node('person', 1, name='Alice')
+
+g.add_node('person', 2, type='villain')     # ReservedFieldError
+g.get_node('person', 1).properties['name'] = 'Mallory'   # TypeError
+
+g.update_node_properties(('person', 1), name='Alice Q')  # OK
+g.update_edge_properties('KNOWS', ('person', 1), ('person', 2), since=2016)
+```
+
+Reserved names are `type`/`id` on nodes and
+`rel_type`/`source`/`target`/`key` on edges.
+
+### Combining both
+
+```python
+from ison_graph.multigraph import MultiGraph
+from ison_graph.structural import ProtectedGraph
+
+class SafeMultiGraph(ProtectedGraph, MultiGraph):
+    """Parallel edges plus a round-trip-safe identity."""
+
+g = SafeMultiGraph()
+```
+
+Overhead versus core `ISONGraph` on 2,000 nodes / 10,000 edges: build ~1.5×
+(MultiGraph), ~1.6× (ProtectedGraph), ~2× combined. `to_ison()` is ~3.5× on
+MultiGraph, the cost of routing emission through the canonical writer.
+Traversal is unaffected.
+
+### Identifier constraints
+
+Node types, node ids and relation types may not contain `:` or `|`:
+
+```python
+graph.add_node('person', 'user:1')          # InvalidIdentifierError
+graph.add_edge('knows:strong', src, dst)    # InvalidIdentifierError
+```
+
+Both characters are structurally significant to the wire format — `:` delimits
+`:type:id` references and `|` delimits ISONL columns — so this is deliberate
+format policy shared by every ISONGraph port, not a Python-side check. It
+applies to `MultiGraph` and `ProtectedGraph` equally.
+
+If your source data uses such values, project them at your boundary rather than
+expecting the graph to accept them: keep the original values as your source of
+truth, map them to graph-safe references for execution, and translate back on
+the way out. Keep the mapping reversible and keep the raw `ISONGraph` object
+private — direct queries against it are only meaningful for graph-safe values.
+
+Escaping these characters in the format itself would be a coordinated change
+across all six ports, so it is not something a single consumer should work
+around locally.
+
 ## Visualization
 
 `ison_graph.viz` turns a graph into a picture in three stages — data, layout,

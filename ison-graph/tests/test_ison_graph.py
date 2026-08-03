@@ -4,12 +4,22 @@ Tests for ison-graph package
 """
 
 import pytest
+import ison_graph
 from ison_graph import (
     ISONGraph, Node, Edge, Path, Direction,
     NodeNotFoundError, EdgeNotFoundError,
     DuplicateNodeError, DuplicateEdgeError,
     InvalidIdentifierError,
+    InvalidPropertyNameError,
 )
+
+
+def test_submodule_version_tracks_package_release():
+    """Public package and query module must report the same release."""
+    import importlib
+
+    query_module = importlib.import_module("ison_graph.query")
+    assert query_module.__version__ == ison_graph.__version__
 
 
 # =============================================================================
@@ -69,6 +79,78 @@ class TestIdentifierValidation:
 # =============================================================================
 # Node Tests
 # =============================================================================
+
+class TestPropertyNameValidation:
+    """Property names become ISON field names, which the format does not
+    quote. An unencodable name corrupts silently on reload, so it is
+    refused at construction instead."""
+
+    @pytest.mark.parametrize("bad", [
+        "first name", "a:b", "a|b", 'a"b', "a\\b", "a\tb", "a\nb", "",
+    ])
+    def test_illegal_node_property_names_are_rejected(self, bad):
+        graph = ISONGraph()
+        with pytest.raises(InvalidPropertyNameError):
+            graph.add_node("p", 1, **{bad: "v"})
+
+    @pytest.mark.parametrize("bad", ["first name", "a:b", "a|b", ""])
+    def test_illegal_edge_property_names_are_rejected(self, bad):
+        graph = ISONGraph()
+        graph.add_node("p", 1)
+        graph.add_node("p", 2)
+        with pytest.raises(InvalidPropertyNameError):
+            graph.add_edge("K", ("p", 1), ("p", 2), **{bad: "v"})
+
+    @pytest.mark.parametrize("ok", [
+        "name", "first_name", "firstName", "a-b", "n1", "über",
+    ])
+    def test_legal_property_names_survive_a_round_trip(self, ok):
+        graph = ISONGraph()
+        graph.add_node("p", 1, **{ok: "v"})
+        restored = ISONGraph.from_ison(graph.to_ison())
+        assert restored.get_node("p", 1).properties[ok] == "v"
+
+    def test_rejected_property_leaves_no_node_behind(self):
+        graph = ISONGraph()
+        with pytest.raises(InvalidPropertyNameError):
+            graph.add_node("p", 1, **{"first name": "v"})
+        assert graph.has_node("p", 1) is False
+
+    def test_names_that_used_to_corrupt_silently(self):
+        """'first name' emitted as two columns and reloaded as
+        {'first': 'v', 'name': None}; 'a:b' had ':b' eaten as a type
+        annotation. Both now fail where the mistake is visible."""
+        graph = ISONGraph()
+        with pytest.raises(InvalidPropertyNameError, match="first name"):
+            graph.add_node("p", 1, **{"first name": "v"})
+        with pytest.raises(InvalidPropertyNameError, match="a:b"):
+            graph.add_node("p", 2, **{"a:b": "v"})
+
+    def test_leading_hash_is_rejected(self):
+        """A field line starting with '#' is read as a comment: the header
+        vanishes, the first data row is taken as the header, and the whole
+        block is lost silently. Reproduced on MultiGraph, where the
+        canonical sort put '#flag' first and reloading gave 0 edges."""
+        graph = ISONGraph()
+        graph.add_node("p", 1)
+        graph.add_node("p", 2)
+        with pytest.raises(InvalidPropertyNameError, match="comment"):
+            graph.add_edge("K", ("p", 1), ("p", 2), **{"#flag": "v"})
+
+    def test_hash_is_only_rejected_in_first_position(self):
+        """Over-rejecting would remove a legal name; 'a#b' round-trips."""
+        graph = ISONGraph()
+        graph.add_node("p", 1, **{"a#b": "v"})
+        assert ISONGraph.from_ison(graph.to_ison()).get_node(
+            "p", 1).properties["a#b"] == "v"
+
+    def test_dot_paths_are_opted_out_of(self):
+        """'.' is a working ISON feature, not a gap: 'a.b' reloads as
+        {'a': {'b': 'v'}}. ISONGraph properties are flat, so it declines."""
+        graph = ISONGraph()
+        with pytest.raises(InvalidPropertyNameError, match="dot path"):
+            graph.add_node("p", 1, **{"a.b": "v"})
+
 
 class TestNodes:
     """Test node operations"""
