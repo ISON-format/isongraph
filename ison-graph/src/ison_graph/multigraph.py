@@ -363,8 +363,16 @@ class MultiGraph(ISONGraph):
         byte-identity is a property of the format rather than something
         each graph port re-derives.
 
-        Rows are pre-sorted because the canonical writer orders rows by
-        their first column only, breaking ties in the order given.
+        Rows are pre-sorted to keep output canonical on ison-py 1.0.4, whose
+        canonical writer orders rows by their first column alone and breaks
+        ties in the order given - so without this, two graphs holding the
+        same edges would serialize differently depending on insertion order.
+
+        A later ison-py sorts on the full field tuple, which makes this
+        redundant (verified: three construction orders give one output with
+        the pre-sort disabled). It stays until that release ships and the
+        dependency floor rises, because dropping it early would make
+        ISONGraph non-canonical on every installable ison-py.
         """
         blocks = [Block(
             kind="meta",
