@@ -346,33 +346,21 @@ class MultiGraph(ISONGraph):
     # Serialization
     # =========================================================================
 
-    def _sorted_edges(self, rel_type: str) -> List[MultiEdge]:
-        return sorted(
-            cast(List[MultiEdge], self._edges[rel_type]),
-            key=lambda e: (e.source[0], str(e.source[1]),
-                           e.target[0], str(e.target[1]), e.key),
-        )
-
     def _document(self) -> Document:
         """Build the ISON Document this graph serializes to.
 
-        MultiGraph decides *ordering* here - which blocks, which rows, in
-        what sequence - and leaves every byte-level decision (quoting,
-        escaping, delimiters, column layout) to ison_parser's canonical
-        writer. That is the ISONCS split: one emitter per language, so
-        byte-identity is a property of the format rather than something
-        each graph port re-derives.
+        MultiGraph decides *what* to emit - which blocks, which rows, which
+        columns - and leaves every byte-level decision to ison_parser's
+        canonical writer: quoting, escaping, delimiters, column layout, and
+        the final block and row order. That is the ISONCS split, so
+        byte-identity is a property of the format rather than something each
+        graph port re-derives.
 
-        Rows are pre-sorted to keep output canonical on ison-py 1.0.4, whose
-        canonical writer orders rows by their first column alone and breaks
-        ties in the order given - so without this, two graphs holding the
-        same edges would serialize differently depending on insertion order.
-
-        A later ison-py sorts on the full field tuple, which makes this
-        redundant (verified: three construction orders give one output with
-        the pre-sort disabled). It stays until that release ships and the
-        dependency floor rises, because dropping it early would make
-        ISONGraph non-canonical on every installable ison-py.
+        Rows are handed over in insertion order. ison-py >= 1.0.5 sorts them
+        on the full field tuple, which makes the same logical graph produce
+        the same bytes whatever order it was built in; earlier versions
+        ordered on the first column alone and needed a compensating sort
+        here, which is why the dependency floor is 1.0.5.
         """
         blocks = [Block(
             kind="meta",
@@ -404,7 +392,7 @@ class MultiGraph(ISONGraph):
             ))
 
         for rel_type in sorted(self._edges.keys()):
-            edges = self._sorted_edges(rel_type)
+            edges = cast(List[MultiEdge], self._edges[rel_type])
             if not edges:
                 continue
 

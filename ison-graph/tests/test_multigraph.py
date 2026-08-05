@@ -368,6 +368,32 @@ class TestSerialization:
         assert restored.get_node("p", 1).properties["note"] == 'has space and "quote"'
         assert restored.get_edge("K", ("p", 1), ("p", 2)).properties["label"] == "two words"
 
+    def test_canonical_across_many_construction_orders(self):
+        """MultiGraph no longer pre-sorts rows - ison-py >= 1.0.5 owns row
+        order. This pins the guarantee end to end, so a floor regression or
+        a writer change shows up here rather than as silently unstable
+        bytes. Every permutation of the same edges must agree."""
+        import itertools
+
+        edges = [
+            ("K", 1, 2, 0, 2015),
+            ("K", 1, 2, 1, 2020),
+            ("K", 2, 3, 0, 2011),
+            ("K", 1, 3, 0, 2001),
+            ("OTHER", 3, 1, 0, 1999),
+        ]
+
+        outputs = set()
+        for order in itertools.permutations(edges):
+            g = MultiGraph()
+            for i in (1, 2, 3):
+                g.add_node("p", i, name=f"n{i}")
+            for rel, s, t, key, since in order:
+                g.add_edge(rel, ("p", s), ("p", t), key=key, since=since)
+            outputs.add((g.to_ison(), g.to_isonl()))
+
+        assert len(outputs) == 1, f"{len(outputs)} distinct outputs across 120 orders"
+
     def test_serialization_is_canonical(self):
         """Same logical graph, different construction order, same bytes."""
         a = MultiGraph()
