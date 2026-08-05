@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/isongraph/isongraph/main/assets/github_logo_stretched.png" alt="ISONGraph Logo">
+  <img src="https://raw.githubusercontent.com/ISON-format/isongraph/main/assets/github_logo_stretched.png" alt="ISONGraph Logo">
 </p>
 
 # ison-graph
@@ -7,7 +7,7 @@
 [![PyPI](https://img.shields.io/pypi/v/ison-graph.svg)](https://pypi.org/project/ison-graph/)
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)](https://github.com/isongraph/isongraph)
+[![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)](https://github.com/ISON-format/isongraph)
 
 **ISONGraph** - A token-efficient, in-memory property graph store built on ISON format.
 
@@ -1172,7 +1172,7 @@ pytest tests/ --cov=ison_graph --cov-report=term-missing
 
 ## License
 
-MIT License - see [LICENSE](https://github.com/isongraph/isongraph/blob/main/LICENSE) for details.
+MIT License - see [LICENSE](https://github.com/ISON-format/isongraph/blob/main/LICENSE) for details.
 
 ## Author
 

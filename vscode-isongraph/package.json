@@ -22,7 +22,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/isongraph/isongraph.git",
+    "url": "https://github.com/ISON-format/isongraph.git",
     "directory": "vscode-isongraph"
   },
   "license": "MIT",

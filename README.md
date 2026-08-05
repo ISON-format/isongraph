@@ -840,7 +840,7 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
 ```bash
 # Clone repository
-git clone https://github.com/isongraph/isongraph.git
+git clone https://github.com/ISON-format/isongraph.git
 cd isongraph
 
 # Python
@@ -882,7 +882,7 @@ MIT License - see [LICENSE](LICENSE) for details.
 - **Website**: [graph.ison.dev](https://graph.ison.dev)
 - **Documentation**: [graph.ison.dev/docs.html](https://graph.ison.dev/docs.html)
 - **ISON Format**: [https://www.ison.dev](https://www.ison.dev)
-- **GitHub**: [https://github.com/isongraph/isongraph](https://github.com/isongraph/isongraph)
+- **GitHub**: [https://github.com/ISON-format/isongraph](https://github.com/ISON-format/isongraph)
 
 ### Benchmarks
 
@@ -911,6 +911,6 @@ MIT License - see [LICENSE](LICENSE) for details.
   author = {Vaikri, Mahesh},
   title = {ISONGraph: Token-Efficient Property Graph Store for AI},
   year = {2025},
-  url = {https://github.com/isongraph/isongraph}
+  url = {https://github.com/ISON-format/isongraph}
 }
 ```

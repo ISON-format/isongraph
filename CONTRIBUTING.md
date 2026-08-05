@@ -5,7 +5,7 @@ Thanks for your interest in contributing! This monorepo hosts the ISONGraph impl
 ## Getting Started
 
 ```bash
-git clone https://github.com/isongraph/isongraph.git
+git clone https://github.com/ISON-format/isongraph.git
 cd isongraph
 ```
 
@@ -37,7 +37,7 @@ Feature parity matters: if you add a feature to one language implementation, ple
 
 ## Reporting Issues
 
-Use [GitHub Issues](https://github.com/isongraph/isongraph/issues). Include the language implementation, version, a minimal reproduction, and expected vs actual behavior.
+Use [GitHub Issues](https://github.com/ISON-format/isongraph/issues). Include the language implementation, version, a minimal reproduction, and expected vs actual behavior.
 
 ## License
 

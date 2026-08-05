@@ -42,10 +42,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/isongraph/isongraph.git"
+    "url": "git+https://github.com/ISON-format/isongraph.git"
   },
   "bugs": {
-    "url": "https://github.com/isongraph/isongraph/issues"
+    "url": "https://github.com/ISON-format/isongraph/issues"
   },
   "homepage": "https://graph.ison.dev"
 }

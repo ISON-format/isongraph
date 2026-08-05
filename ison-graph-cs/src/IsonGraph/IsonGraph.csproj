@@ -18,7 +18,7 @@
     <Version>1.1.0</Version>
     <Authors>Mahesh Vaikri</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <RepositoryUrl>https://github.com/isongraph/isongraph</RepositoryUrl>
+    <RepositoryUrl>https://github.com/ISON-format/isongraph</RepositoryUrl>
     <PackageProjectUrl>https://graph.ison.dev</PackageProjectUrl>
     <Description>ISONGraph - Token-efficient property graph store with ISON persistence, ISONQL queries, schema validation, and deterministic graph visualization</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>

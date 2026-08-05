@@ -59,8 +59,8 @@ dev = [
 [project.urls]
 Homepage = "https://graph.ison.dev"
 Documentation = "https://graph.ison.dev/docs.html"
-Repository = "https://github.com/isongraph/isongraph"
-Issues = "https://github.com/isongraph/isongraph/issues"
+Repository = "https://github.com/ISON-format/isongraph"
+Issues = "https://github.com/ISON-format/isongraph/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

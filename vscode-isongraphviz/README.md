@@ -49,4 +49,4 @@ npm run compile
 
 ## License
 
-MIT — part of the [ISONGraph](https://github.com/isongraph/isongraph) project.
+MIT — part of the [ISONGraph](https://github.com/ISON-format/isongraph) project.

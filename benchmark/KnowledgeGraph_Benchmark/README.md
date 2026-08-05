@@ -216,7 +216,7 @@ Mahesh Vaikri
 
 ## Links
 
-- [ISONGraph Repository](https://github.com/isongraph/isongraph)
+- [ISONGraph Repository](https://github.com/ISON-format/isongraph)
 - [ISON Format Specification](https://www.ison.dev)
 - [Benchmark Results](BENCHMARK.md)
 - [Data Traversal Benchmark](../DataTraversal_Benchmark/)
