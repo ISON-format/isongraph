@@ -52,7 +52,8 @@ from enum import Enum
 from ison_parser import (
     Document, Block, Reference,
     loads, dumps, load, dump,
-    loads_isonl, dumps_isonl
+    loads_isonl, dumps_isonl,
+    dumps_canonical, dumps_canonical_isonl
 )
 
 __version__ = "1.3.0"
@@ -201,18 +202,33 @@ class DuplicateEdgeError(GraphError):
 
 
 class InvalidIdentifierError(GraphError):
-    """Node type, node id, or relationship type contains a reserved character.
+    """A node type, node id, or relationship type is not representable.
 
-    ':' and '|' are structurally significant to the ISON/ISONL wire format
-    (':' delimits ``:type:id`` references, '|' delimits ISONL columns);
-    allowing them in an identifier makes the graph unparseable after a
-    to_ison()/to_isonl() round-trip instead of just failing loudly here.
+    Node and relationship types become ISON block names; node ids appear
+    both as values and inside ``:type:id`` references, which have no
+    quoting syntax at all. So an identifier containing whitespace, ':' or
+    '|' cannot be written and read back - it either fails to parse or
+    parses as different data.
+
+    Mirrors ison-py's own name rules so the failure lands at construction,
+    where the offending value is still visible, rather than at
+    serialization time or, worse, silently on reload.
     """
+
+    #: Illegal anywhere. Whitespace splits a row or header; ':' delimits
+    #: references; '|' delimits ISONL columns.
+    FORBIDDEN = (' ', '\t', '\n', '\r', ':', '|')
+
+    #: Additionally illegal in a block name, which ISONL cannot quote.
+    BLOCK_FORBIDDEN = FORBIDDEN + ('"', '\\')
+
     def __init__(self, kind: str, value: str):
         self.kind = kind
         self.value = value
         super().__init__(
-            f"{kind} must not contain ':' or '|': {value!r}"
+            f"{kind} {value!r} is not representable: it must not be empty "
+            f"or contain whitespace, ':' or '|'"
+            + (", '\"' or '\\'" if 'type' in kind.lower() else "")
         )
 
 
@@ -275,6 +291,22 @@ _MULTIGRAPH_REJECTION = (
     f"graph and would silently drop them - load it with "
     f"ison_graph.multigraph.MultiGraph instead."
 )
+
+
+def _resolve_ref(graph: "ISONGraph", ref: Reference) -> NodeRef:
+    """Turn an ISON reference into the NodeRef the graph actually holds.
+
+    ``:person:1`` carries no type information, so the id could be the
+    string "1" or the int 1 and the reference looks identical either way.
+    Guessing from the text alone silently breaks graphs with string ids
+    that happen to be numeric, so resolve against the loaded nodes and only
+    fall back to guessing when neither form is present.
+    """
+    if graph.has_node(ref.type, ref.id):
+        return (ref.type, ref.id)
+    if ref.id.isdigit() and graph.has_node(ref.type, int(ref.id)):
+        return (ref.type, int(ref.id))
+    return (ref.type, int(ref.id) if ref.id.isdigit() else ref.id)
 
 
 def _reject_if_multigraph(doc: Document) -> None:
@@ -344,7 +376,12 @@ class ISONGraph:
         to_ison()/to_isonl() round-trip instead of failing at construction.
         """
         s = str(value)
-        if ':' in s or '|' in s:
+        # Types and relationship types become block names, which ISONL
+        # additionally cannot quote; ids only have to survive a reference.
+        forbidden = (InvalidIdentifierError.BLOCK_FORBIDDEN
+                     if 'type' in kind.lower()
+                     else InvalidIdentifierError.FORBIDDEN)
+        if not s or any(ch in s for ch in forbidden):
             raise InvalidIdentifierError(kind, s)
 
     @staticmethod
@@ -1117,9 +1154,63 @@ class ISONGraph:
     # Serialization (ISON/ISONL)
     # =========================================================================
 
+    def _document(self) -> Document:
+        """Build the ISON Document this graph serializes to.
+
+        ISONGraph decides *what* to emit - which blocks, which rows, which
+        columns - and hands every byte-level decision to ison_parser's
+        canonical writer: quoting, escaping, delimiters, column layout, and
+        the final block and row order.
+
+        This used to be hand-rolled here, which meant ISON syntax had two
+        implementations per language that had to agree forever. They did
+        not: the id column was written unquoted, so a node id containing a
+        space produced output that would not reparse, while the same graph
+        went through the canonical writer intact.
+        """
+        blocks = []
+
+        for node_type in sorted(self._nodes.keys()):
+            nodes = list(self._nodes[node_type].values())
+            if not nodes:
+                continue
+
+            prop_keys = sorted({k for n in nodes for k in n.properties})
+            blocks.append(Block(
+                kind="nodes",
+                name=node_type,
+                fields=["id"] + prop_keys,
+                rows=[
+                    {"id": n.id, **{k: n.properties.get(k) for k in prop_keys}}
+                    for n in nodes
+                ],
+            ))
+
+        for rel_type in sorted(self._edges.keys()):
+            edges = self._edges[rel_type]
+            if not edges:
+                continue
+
+            prop_keys = sorted({k for e in edges for k in e.properties})
+            blocks.append(Block(
+                kind="edges",
+                name=rel_type,
+                fields=["source", "target"] + prop_keys,
+                rows=[
+                    {
+                        "source": Reference(id=str(e.source[1]), type=e.source[0]),
+                        "target": Reference(id=str(e.target[1]), type=e.target[0]),
+                        **{k: e.properties.get(k) for k in prop_keys},
+                    }
+                    for e in edges
+                ],
+            ))
+
+        return Document(blocks=blocks)
+
     def to_ison(self) -> str:
         """
-        Serialize graph to ISON format.
+        Serialize graph to canonical ISON (ISONCS).
 
         Format:
             nodes.{type}
@@ -1130,135 +1221,20 @@ class ISONGraph:
             source target {property_fields...}
             {source_ref} {target_ref} {property_values...}
 
-        Serialization is canonical: node type blocks, node rows within a
-        block, edge type blocks, and edge rows within a block are all sorted
-        (ordinal string comparison), independent of insertion order. The
-        same logical graph always serializes to the same bytes, regardless
-        of construction history - this is what makes ``to_ison()`` output
-        safe to rely on for content-addressing or prompt caching.
+        Output is canonical: the same logical graph always serializes to
+        the same bytes regardless of construction order, which is what
+        makes it safe for content addressing or prompt caching. Block, row
+        and column order are the canonical writer's, not ISONGraph's.
         """
-        blocks = []
-
-        # Serialize nodes by type
-        for node_type in sorted(self._nodes.keys()):
-            nodes = sorted(self._nodes[node_type].values(), key=lambda n: str(n.id))
-            if not nodes:
-                continue
-
-            # Collect all property keys
-            prop_keys = set()
-            for node in nodes:
-                prop_keys.update(node.properties.keys())
-            prop_keys = sorted(prop_keys)
-
-            # Build block
-            lines = [f"nodes.{node_type}"]
-            fields = ["id"] + prop_keys
-            lines.append(" ".join(fields))
-
-            for node in nodes:
-                values = [str(node.id)]
-                for key in prop_keys:
-                    val = node.properties.get(key)
-                    values.append(self._value_to_ison(val))
-                lines.append(" ".join(values))
-
-            blocks.append("\n".join(lines))
-
-        # Serialize edges by type
-        for rel_type in sorted(self._edges.keys()):
-            edges = sorted(
-                self._edges[rel_type],
-                key=lambda e: (e.source[0], str(e.source[1]), e.target[0], str(e.target[1])),
-            )
-            if not edges:
-                continue
-
-            # Collect all property keys
-            prop_keys = set()
-            for edge in edges:
-                prop_keys.update(edge.properties.keys())
-            prop_keys = sorted(prop_keys)
-
-            # Build block
-            lines = [f"edges.{rel_type}"]
-            fields = ["source", "target"] + prop_keys
-            lines.append(" ".join(fields))
-
-            for edge in edges:
-                source_ref = f":{edge.source[0]}:{edge.source[1]}"
-                target_ref = f":{edge.target[0]}:{edge.target[1]}"
-                values = [source_ref, target_ref]
-                for key in prop_keys:
-                    val = edge.properties.get(key)
-                    values.append(self._value_to_ison(val))
-                lines.append(" ".join(values))
-
-            blocks.append("\n".join(lines))
-
-        return "\n\n".join(blocks)
-
-    def _value_to_ison(self, value: Any) -> str:
-        """Convert value to ISON string representation.
-
-        Standardized quoting rule (shared by all ISON language ports): a
-        string is wrapped in double quotes when it contains a space, ``|``,
-        ``"``, a newline, or is the empty string. Embedded ``"`` is escaped
-        as ``\\"`` and newline as ``\\n``; the ISON/ISONL loaders reverse
-        these so round-trips are lossless.
-        """
-        if value is None:
-            return "null"
-        if isinstance(value, bool):
-            return "true" if value else "false"
-        if isinstance(value, str):
-            if value == "" or any(ch in value for ch in (' ', '|', '"', '\n')):
-                escaped = value.replace('"', '\\"').replace('\n', '\\n')
-                return f'"{escaped}"'
-            return value
-        return str(value)
+        return dumps_canonical(self._document())
 
     def to_isonl(self) -> str:
         """
-        Serialize graph to ISONL streaming format.
+        Serialize graph to canonical ISONL streaming format.
 
-        Row order is canonical, matching :meth:`to_ison` - see there for
-        the exact ordering rule.
+        Row order matches :meth:`to_ison` - see there for the guarantee.
         """
-        lines = []
-
-        # Serialize nodes (type blocks, then rows, both sorted)
-        for node_type in sorted(self._nodes.keys()):
-            nodes = sorted(self._nodes[node_type].values(), key=lambda n: str(n.id))
-            for node in nodes:
-                prop_keys = sorted(node.properties.keys())
-                fields = ["id"] + prop_keys
-                values = [str(node.id)] + [
-                    self._value_to_ison(node.properties.get(k))
-                    for k in prop_keys
-                ]
-                line = f"nodes.{node.type}|{' '.join(fields)}|{' '.join(values)}"
-                lines.append(line)
-
-        # Serialize edges (type blocks, then rows, both sorted)
-        for rel_type in sorted(self._edges.keys()):
-            edges = sorted(
-                self._edges[rel_type],
-                key=lambda e: (e.source[0], str(e.source[1]), e.target[0], str(e.target[1])),
-            )
-            for edge in edges:
-                prop_keys = sorted(edge.properties.keys())
-                fields = ["source", "target"] + prop_keys
-                source_ref = f":{edge.source[0]}:{edge.source[1]}"
-                target_ref = f":{edge.target[0]}:{edge.target[1]}"
-                values = [source_ref, target_ref] + [
-                    self._value_to_ison(edge.properties.get(k))
-                    for k in prop_keys
-                ]
-                line = f"edges.{rel_type}|{' '.join(fields)}|{' '.join(values)}"
-                lines.append(line)
-
-        return "\n".join(lines)
+        return dumps_canonical_isonl(self._document())
 
     def save(self, path: Union[str, FilePath], format: str = "auto") -> None:
         """
@@ -1296,6 +1272,8 @@ class ISONGraph:
         doc = loads(text)
         _reject_if_multigraph(doc)
 
+        # Nodes first regardless of block order - the canonical writer sorts
+        # blocks by name, which puts 'edges' ahead of 'nodes'.
         for block in doc.blocks:
             if block.kind == "nodes":
                 node_type = block.name
@@ -1304,7 +1282,8 @@ class ISONGraph:
                     props = {k: v for k, v in row.items() if k != "id"}
                     graph.add_node(node_type, node_id, **props)
 
-            elif block.kind == "edges":
+        for block in doc.blocks:
+            if block.kind == "edges":
                 rel_type = block.name
                 for row in block.rows:
                     source = row.get("source")
@@ -1313,9 +1292,9 @@ class ISONGraph:
 
                     # Convert Reference objects to tuples
                     if isinstance(source, Reference):
-                        source = (source.type, int(source.id) if source.id.isdigit() else source.id)
+                        source = _resolve_ref(graph, source)
                     if isinstance(target, Reference):
-                        target = (target.type, int(target.id) if target.id.isdigit() else target.id)
+                        target = _resolve_ref(graph, target)
 
                     graph.add_edge(rel_type, source, target, **props)
 
@@ -1328,7 +1307,7 @@ class ISONGraph:
         doc = loads_isonl(text)
         _reject_if_multigraph(doc)
 
-        # Same logic as from_ison since loads_isonl returns Document
+        # Same logic as from_ison, nodes first - see there.
         for block in doc.blocks:
             if block.kind == "nodes":
                 node_type = block.name
@@ -1337,7 +1316,8 @@ class ISONGraph:
                     props = {k: v for k, v in row.items() if k != "id"}
                     graph.add_node(node_type, node_id, **props)
 
-            elif block.kind == "edges":
+        for block in doc.blocks:
+            if block.kind == "edges":
                 rel_type = block.name
                 for row in block.rows:
                     source = row.get("source")
@@ -1345,9 +1325,9 @@ class ISONGraph:
                     props = {k: v for k, v in row.items() if k not in ("source", "target")}
 
                     if isinstance(source, Reference):
-                        source = (source.type, int(source.id) if source.id.isdigit() else source.id)
+                        source = _resolve_ref(graph, source)
                     if isinstance(target, Reference):
-                        target = (target.type, int(target.id) if target.id.isdigit() else target.id)
+                        target = _resolve_ref(graph, target)
 
                     graph.add_edge(rel_type, source, target, **props)
 

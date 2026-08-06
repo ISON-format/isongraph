@@ -55,13 +55,37 @@ class TestIdentifierValidation:
         with pytest.raises(InvalidIdentifierError):
             graph.add_edge(bad, ("person", 1), ("person", 2))
 
-    def test_valid_identifiers_still_allowed(self):
-        # Spaces, hyphens, unicode etc. are fine - only ':' and '|' are reserved.
+    @pytest.mark.parametrize("bad", ["a b", "a\tb", "a\nb", ""])
+    def test_unrepresentable_identifiers_are_rejected(self, bad):
+        """Whitespace and empty used to be accepted and then blow up on
+        round trip: ':a b:1' splits mid-reference, and an id column holding
+        'a b' reparses as two values. Rejected at construction instead."""
         graph = ISONGraph()
-        graph.add_node("a type", "an id-1")
-        graph.add_node("b", "2")
-        edge = graph.add_edge("shares border with", ("a type", "an id-1"), ("b", "2"))
-        assert edge.rel_type == "shares border with"
+        with pytest.raises(InvalidIdentifierError):
+            graph.add_node(bad, "1")
+        with pytest.raises(InvalidIdentifierError):
+            graph.add_node("p", bad)
+
+    @pytest.mark.parametrize("bad", ['a"b', "a\\b"])
+    def test_block_name_only_restrictions(self, bad):
+        """ISONL cannot quote a block name, so types are stricter than ids."""
+        graph = ISONGraph()
+        with pytest.raises(InvalidIdentifierError):
+            graph.add_node(bad, "1")
+        graph.add_node("p", bad)  # fine as an id - it is a value, not a name
+
+    def test_valid_identifiers_still_allowed(self):
+        # Hyphens, dots, '#', quotes-in-ids and unicode all round-trip.
+        graph = ISONGraph()
+        graph.add_node("a-type", "an-id-1")
+        graph.add_node("b.c", "#2")
+        graph.add_node("über", "3")
+        edge = graph.add_edge("SHARES_BORDER_WITH", ("a-type", "an-id-1"), ("b.c", "#2"))
+        assert edge.rel_type == "SHARES_BORDER_WITH"
+
+        restored = ISONGraph.from_ison(graph.to_ison())
+        assert restored.node_count() == 3
+        assert restored.edge_count() == 1
 
     def test_no_longer_crashes_on_ison_roundtrip(self):
         # This previously raised NodeNotFoundError on from_ison(), not at
@@ -641,46 +665,46 @@ source target since
 # =============================================================================
 
 CANONICAL_GOLDEN_ISON = (
+    'edges.KNOWS\n'
+    'since source target\n'
+    '"2020" :person:1 :person:2\n'
+    '"2021" :person:10 :person:1\n'
+    '\n'
+    'edges.WORKS_AT\n'
+    'role source target\n'
+    '"Lead Engineer" :person:1 :company:acme\n'
+    '\n'
+    'edges.WORKS_ON\n'
+    'hours source target\n'
+    '"3" :person:10 :project:p1\n'
+    '"5" :person:2 :project:p1\n'
+    '\n'
     'nodes.company\n'
     'id name\n'
     'acme "Acme Corp"\n'
     '\n'
     'nodes.person\n'
     'id age name\n'
-    '1 30 Alice\n'
-    '10 22 Jax\n'
-    '2 25 Bob\n'
+    '"1" "30" Alice\n'
+    '"10" "22" Jax\n'
+    '"2" "25" Bob\n'
     '\n'
     'nodes.project\n'
     'id name tag\n'
-    'p1 Alpha "a|b"\n'
-    '\n'
-    'edges.KNOWS\n'
-    'source target since\n'
-    ':person:1 :person:2 2020\n'
-    ':person:10 :person:1 2021\n'
-    '\n'
-    'edges.WORKS_AT\n'
-    'source target role\n'
-    ':person:1 :company:acme "Lead Engineer"\n'
-    '\n'
-    'edges.WORKS_ON\n'
-    'source target hours\n'
-    ':person:10 :project:p1 3\n'
-    ':person:2 :project:p1 5'
+    'p1 Alpha a|b'
 )
 
 CANONICAL_GOLDEN_ISONL = (
+    'edges.KNOWS|since source target|"2020" :person:1 :person:2\n'
+    'edges.KNOWS|since source target|"2021" :person:10 :person:1\n'
+    'edges.WORKS_AT|role source target|"Lead Engineer" :person:1 :company:acme\n'
+    'edges.WORKS_ON|hours source target|"3" :person:10 :project:p1\n'
+    'edges.WORKS_ON|hours source target|"5" :person:2 :project:p1\n'
     'nodes.company|id name|acme "Acme Corp"\n'
-    'nodes.person|id age name|1 30 Alice\n'
-    'nodes.person|id age name|10 22 Jax\n'
-    'nodes.person|id age name|2 25 Bob\n'
-    'nodes.project|id name tag|p1 Alpha "a|b"\n'
-    'edges.KNOWS|source target since|:person:1 :person:2 2020\n'
-    'edges.KNOWS|source target since|:person:10 :person:1 2021\n'
-    'edges.WORKS_AT|source target role|:person:1 :company:acme "Lead Engineer"\n'
-    'edges.WORKS_ON|source target hours|:person:10 :project:p1 3\n'
-    'edges.WORKS_ON|source target hours|:person:2 :project:p1 5'
+    'nodes.person|id age name|"1" "30" Alice\n'
+    'nodes.person|id age name|"10" "22" Jax\n'
+    'nodes.person|id age name|"2" "25" Bob\n'
+    'nodes.project|id name tag|p1 Alpha "a\\|b"'
 )
 
 
@@ -737,7 +761,10 @@ class TestCanonicalSerialization:
         # in, but assert it explicitly so the invariant reads as intentional.
         ison = _build_canonical_fixture(0).to_ison()
         person_block = ison.split('nodes.person\n')[1].split('\n\n')[0]
-        ids = [line.split(' ')[0] for line in person_block.splitlines()[1:]]
+        # Ids are quoted because the fixture uses string ids - the canonical
+        # writer quotes a string that would otherwise reparse as an int, so
+        # the round trip stays lossless. Strip that to read the order.
+        ids = [line.split(' ')[0].strip('"') for line in person_block.splitlines()[1:]]
         assert ids == ['1', '10', '2']
 
     def test_roundtrip_preserves_canonical_form(self):
