@@ -104,6 +104,57 @@ class TestIdentifierValidation:
 # Node Tests
 # =============================================================================
 
+class TestTypePreservation:
+    """Quoting is the type marker: bare 42 is an int, "42" is a string.
+    That holds for property values and node ids alike."""
+
+    @pytest.mark.parametrize("value", [
+        42, "42", 1.5, "1.5", True, "true", None, "null", "hello", "",
+    ])
+    def test_property_values_keep_their_type(self, value):
+        graph = ISONGraph()
+        graph.add_node("p", 1, v=value)
+        back = ISONGraph.from_ison(graph.to_ison()).get_node("p", 1).properties["v"]
+        assert back == value and type(back) is type(value)
+
+    @pytest.mark.parametrize("ids", [[1, 2], ["1", "2"], [1, "a"]])
+    def test_node_ids_keep_their_type(self, ids):
+        graph = ISONGraph()
+        for i in ids:
+            graph.add_node("p", i)
+        graph.add_edge("K", ("p", ids[0]), ("p", ids[1]))
+
+        restored = ISONGraph.from_ison(graph.to_ison())
+        assert sorted(((n.id, type(n.id).__name__) for n in restored.nodes()),
+                      key=lambda x: str(x[0])) == sorted(
+                          ((i, type(i).__name__) for i in ids), key=lambda x: str(x[0]))
+        edge = next(iter(restored.edges()))
+        assert edge.source == ("p", ids[0]) and edge.target == ("p", ids[1])
+
+    def test_ids_differing_only_by_type_are_refused(self):
+        """A reference cannot carry a type: 1 and "1" both write ':p:1'.
+        The id column could tell them apart, the reference cannot, so a
+        graph holding both reloads with the edges collapsed onto one node.
+        Refused at construction instead."""
+        graph = ISONGraph()
+        graph.add_node("p", 1)
+        with pytest.raises(DuplicateNodeError, match=":p:1"):
+            graph.add_node("p", "1")
+
+        reverse = ISONGraph()
+        reverse.add_node("p", "1")
+        with pytest.raises(DuplicateNodeError):
+            reverse.add_node("p", 1)
+
+    def test_only_the_colliding_form_is_refused(self):
+        graph = ISONGraph()
+        graph.add_node("p", 1)
+        graph.add_node("p", 2)
+        graph.add_node("p", "a")
+        graph.add_node("q", "1")   # different type, no collision
+        assert graph.node_count() == 4
+
+
 class TestPropertyNameValidation:
     """Property names become ISON field names, which the format does not
     quote. An unencodable name corrupts silently on reload, so it is

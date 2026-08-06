@@ -425,6 +425,19 @@ class ISONGraph:
         if node_id in self._nodes[node_type]:
             raise DuplicateNodeError((node_type, node_id))
 
+        # An id column distinguishes 1 from "1" by quoting, but a reference
+        # cannot: both write as ':p:1'. Two nodes whose ids differ only by
+        # type are therefore addressable in memory and indistinguishable on
+        # the wire, and reloading collapses them - so refuse the second.
+        if isinstance(node_id, str) and node_id.lstrip('-').isdigit():
+            twin: Union[int, str] = int(node_id)
+        elif isinstance(node_id, int) and not isinstance(node_id, bool):
+            twin = str(node_id)
+        else:
+            twin = node_id
+        if twin != node_id and twin in self._nodes[node_type]:
+            raise DuplicateNodeError((node_type, node_id))
+
         node = Node(type=node_type, id=node_id, properties=properties)
         self._nodes[node_type][node_id] = node
         return node
