@@ -10,6 +10,7 @@
 // skip.
 
 using System.Text;
+using IsonParser;
 
 namespace IsonGraph;
 
@@ -206,328 +207,211 @@ public sealed partial class ISONGraph
         return sorted;
     }
 
-    public string ToIson()
+    /// <summary>
+    /// Build the ISON Document this graph serializes to.
+    /// </summary>
+    /// <remarks>
+    /// ISONGraph decides <em>what</em> to emit - which blocks, which rows,
+    /// which columns - and hands every byte-level decision to Ison.Parser's
+    /// canonical writer: quoting, escaping, delimiters, column layout, and
+    /// the final block and row order.
+    ///
+    /// This used to be hand-rolled here, which meant ISON syntax had two
+    /// implementations per language that had to agree forever. They did not:
+    /// the id column was written unquoted, so a node id containing a space
+    /// produced output that would not reparse.
+    /// </remarks>
+    private Document BuildDocument()
     {
-        var blocks = new List<string>();
+        var doc = new Document();
 
-        // Serialize nodes by type (sorted, ordinal).
-        var sortedNodeTypes = new List<string>(_nodeTypeOrder);
-        sortedNodeTypes.Sort(OrdinalComparer);
-
-        foreach (var nodeType in sortedNodeTypes)
+        var nodeTypes = new List<string>(_nodeTypeOrder);
+        nodeTypes.Sort(OrdinalComparer);
+        foreach (var nodeType in nodeTypes)
         {
-            var typeNodes = SortedNodes(_nodeOrder[nodeType]);
-            if (typeNodes.Count == 0)
-                continue;
+            var typeNodes = _nodeOrder[nodeType];
+            if (typeNodes.Count == 0) continue;
 
-            var propKeys = new SortedSet<string>(OrdinalComparer);
+            var propKeys = new SortedSet<string>(StringComparer.Ordinal);
             foreach (var node in typeNodes)
-            {
                 foreach (var key in node.Properties.Keys)
                     propKeys.Add(key);
-            }
 
-            var lines = new List<string> { "nodes." + nodeType };
-            var fields = new List<string> { "id" };
-            fields.AddRange(propKeys);
-            lines.Add(string.Join(" ", fields));
+            var block = new Block("nodes", nodeType);
+            block.Fields.Add("id");
+            foreach (var key in propKeys) block.Fields.Add(key);
 
             foreach (var node in typeNodes)
             {
-                var values = new List<string> { QuoteValue(node.Id) };
+                var row = new Dictionary<string, object?> { ["id"] = node.Id };
                 foreach (var key in propKeys)
-                {
-                    values.Add(node.Properties.TryGetValue(key, out var v)
-                        ? QuoteValue(v)
-                        : "null");
-                }
-                lines.Add(string.Join(" ", values));
+                    row[key] = node.Properties.TryGetValue(key, out var v) ? v : null;
+                block.Rows.Add(row);
             }
-
-            blocks.Add(string.Join("\n", lines));
+            doc.Blocks.Add(block);
         }
 
-        // Serialize edges by type (sorted, ordinal).
-        var sortedEdgeTypes = new List<string>(_edgeTypeOrder);
-        sortedEdgeTypes.Sort(OrdinalComparer);
-
-        foreach (var relType in sortedEdgeTypes)
+        var relTypes = new List<string>(_edgeTypeOrder);
+        relTypes.Sort(OrdinalComparer);
+        foreach (var relType in relTypes)
         {
-            var relEdges = SortedEdges(_edgesByType[relType]);
-            if (relEdges.Count == 0)
-                continue;
+            var edges = _edgesByType[relType];
+            if (edges.Count == 0) continue;
 
-            var propKeys = new SortedSet<string>(OrdinalComparer);
-            foreach (var edge in relEdges)
-            {
+            var propKeys = new SortedSet<string>(StringComparer.Ordinal);
+            foreach (var edge in edges)
                 foreach (var key in edge.Properties.Keys)
                     propKeys.Add(key);
-            }
 
-            var lines = new List<string> { "edges." + relType };
-            var fields = new List<string> { "source", "target" };
-            fields.AddRange(propKeys);
-            lines.Add(string.Join(" ", fields));
+            var block = new Block("edges", relType);
+            block.Fields.Add("source");
+            block.Fields.Add("target");
+            foreach (var key in propKeys) block.Fields.Add(key);
 
-            foreach (var edge in relEdges)
+            foreach (var edge in edges)
             {
-                var values = new List<string> { edge.Source.ToIsonRef(), edge.Target.ToIsonRef() };
-                foreach (var key in propKeys)
+                var row = new Dictionary<string, object?>
                 {
-                    values.Add(edge.Properties.TryGetValue(key, out var v)
-                        ? QuoteValue(v)
-                        : "null");
-                }
-                lines.Add(string.Join(" ", values));
+                    ["source"] = new Reference(edge.Source.Id, edge.Source.Type),
+                    ["target"] = new Reference(edge.Target.Id, edge.Target.Type),
+                };
+                foreach (var key in propKeys)
+                    row[key] = edge.Properties.TryGetValue(key, out var v) ? v : null;
+                block.Rows.Add(row);
             }
-
-            blocks.Add(string.Join("\n", lines));
+            doc.Blocks.Add(block);
         }
 
-        return string.Join("\n\n", blocks);
+        return doc;
     }
 
     /// <summary>
-    /// Serialize the graph to the ISONL streaming format, one line per row:
-    ///     nodes.person|id name age|1 Alice 30
+    /// Serialize to canonical ISON (ISONCS). The same logical graph always
+    /// serializes to the same bytes regardless of construction order.
     /// </summary>
-    public string ToIsonl()
-    {
-        var lines = new List<string>();
-
-        // Serialize nodes (type blocks, then rows, both sorted).
-        var sortedNodeTypes = new List<string>(_nodeTypeOrder);
-        sortedNodeTypes.Sort(OrdinalComparer);
-
-        foreach (var nodeType in sortedNodeTypes)
-        {
-            foreach (var node in SortedNodes(_nodeOrder[nodeType]))
-            {
-                var propKeys = new List<string>(node.Properties.Keys);
-                propKeys.Sort(OrdinalComparer);
-
-                var fields = new List<string> { "id" };
-                fields.AddRange(propKeys);
-                var values = new List<string> { QuoteValue(node.Id) };
-                foreach (var key in propKeys)
-                    values.Add(QuoteValue(node.Properties[key]));
-
-                lines.Add($"nodes.{node.Type}|{string.Join(" ", fields)}|{string.Join(" ", values)}");
-            }
-        }
-
-        // Serialize edges (type blocks, then rows, both sorted).
-        var sortedEdgeTypes = new List<string>(_edgeTypeOrder);
-        sortedEdgeTypes.Sort(OrdinalComparer);
-
-        foreach (var relType in sortedEdgeTypes)
-        {
-            foreach (var edge in SortedEdges(_edgesByType[relType]))
-            {
-                var propKeys = new List<string>(edge.Properties.Keys);
-                propKeys.Sort(OrdinalComparer);
-
-                var fields = new List<string> { "source", "target" };
-                fields.AddRange(propKeys);
-                var values = new List<string> { edge.Source.ToIsonRef(), edge.Target.ToIsonRef() };
-                foreach (var key in propKeys)
-                    values.Add(QuoteValue(edge.Properties[key]));
-
-                lines.Add($"edges.{relType}|{string.Join(" ", fields)}|{string.Join(" ", values)}");
-            }
-        }
-
-        return string.Join("\n", lines);
-    }
-
-    // =========================================================================
-    // Deserialization
-    // =========================================================================
-
-    private static (string Kind, string TypeName) ParseBlockHeader(string header, string context)
-    {
-        var dotPos = header.IndexOf('.');
-        if (dotPos < 0)
-        {
-            throw new GraphError(
-                $"{context}: malformed block header '{header}' " +
-                "(expected 'nodes.<type>' or 'edges.<REL>')");
-        }
-        var kind = header[..dotPos];
-        var typeName = header[(dotPos + 1)..];
-        if (kind != "nodes" && kind != "edges")
-        {
-            throw new GraphError(
-                $"{context}: unknown block kind '{kind}' in header '{header}' " +
-                "(expected 'nodes' or 'edges')");
-        }
-        return (kind, typeName);
-    }
-
-    private void AddRowFromProps(string kind, string typeName,
-                                 IReadOnlyList<string> fields, IReadOnlyList<string> values,
-                                 string context, string rowDescription)
-    {
-        var props = new Dictionary<string, string>();
-        for (var i = 0; i < fields.Count; i++)
-            props[fields[i]] = values[i];
-
-        if (kind == "nodes")
-        {
-            if (!props.TryGetValue("id", out var nodeId))
-            {
-                throw new GraphError(
-                    $"{context}: 'nodes.{typeName}' is missing the required 'id' field: " +
-                    rowDescription);
-            }
-            props.Remove("id");
-            try
-            {
-                AddNode(typeName, nodeId, props);
-            }
-            catch (DuplicateNodeError)
-            {
-                throw new GraphError(
-                    $"{context}: duplicate node row ':{typeName}:{nodeId}' in 'nodes.{typeName}'");
-            }
-        }
-        else // edges
-        {
-            if (!props.TryGetValue("source", out var sourceRef) ||
-                !props.TryGetValue("target", out var targetRef))
-            {
-                throw new GraphError(
-                    $"{context}: 'edges.{typeName}' is missing the required 'source' and/or " +
-                    $"'target' field: {rowDescription}");
-            }
-            var source = ParseNodeRefString(sourceRef);
-            var target = ParseNodeRefString(targetRef);
-            props.Remove("source");
-            props.Remove("target");
-            try
-            {
-                AddEdge(typeName, source, target, props);
-            }
-            catch (NodeNotFoundError e)
-            {
-                throw new GraphError(
-                    $"{context}: edge in 'edges.{typeName}' references a node that has not " +
-                    $"been defined ({e.Message}); node rows must appear before the edges " +
-                    "that use them");
-            }
-            catch (DuplicateEdgeError)
-            {
-                throw new GraphError(
-                    $"{context}: duplicate edge row '{sourceRef} -> {targetRef}' " +
-                    $"in 'edges.{typeName}'");
-            }
-        }
-    }
+    public string ToIson() => IsonParser.Ison.DumpsCanonical(BuildDocument());
 
     /// <summary>
-    /// Parse a graph from ISON format. Malformed input (field/value count
-    /// mismatch, missing id/source/target, unknown block kind, duplicates,
-    /// undefined edge endpoints) throws a descriptive <see cref="GraphError"/>.
+    /// Serialize to canonical ISONL. Row order matches <see cref="ToIson"/>.
     /// </summary>
-    public static ISONGraph FromIson(string text, string name = "graph")
+    public string ToIsonl() => IsonParser.Ison.DumpsCanonicalIsonl(BuildDocument());
+
+    private static string? ValueText(object? value) => value switch
+    {
+        null => null,
+        Reference r => r.ToIson(),
+        bool b => b ? "true" : "false",
+        _ => value.ToString(),
+    };
+
+    private static ISONGraph BuildFromDocument(Document doc, string name)
     {
         var graph = new ISONGraph(name);
 
-        // Split into blocks separated by blank lines.
-        var blocks = new List<List<string>>();
-        var currentBlock = new List<string>();
-        foreach (var rawLine in text.Split('\n'))
+        foreach (var block in doc.Blocks)
         {
-            var line = rawLine.Trim();
-            if (line.Length == 0)
+            if (block.Kind != "nodes" && block.Kind != "edges")
+                throw new GraphError(
+                    $"unknown block kind '{block.Kind}' (expected 'nodes' or 'edges')");
+        }
+
+        // Nodes first regardless of block order - the canonical writer sorts
+        // blocks by name, which puts 'edges' ahead of 'nodes'.
+        foreach (var block in doc.Blocks)
+        {
+            if (block.Kind != "nodes") continue;
+            foreach (var row in block.Rows)
             {
-                if (currentBlock.Count > 0)
+                var id = row.TryGetValue("id", out var rawId) ? ValueText(rawId) : null;
+                if (id is null)
+                    throw new GraphError("FromIson: node row has no id");
+
+                var props = new Dictionary<string, string>();
+                foreach (var kv in row)
                 {
-                    blocks.Add(currentBlock);
-                    currentBlock = new List<string>();
+                    if (kv.Key == "id") continue;
+                    var text = ValueText(kv.Value);
+                    if (text is not null) props[kv.Key] = text;
+                }
+                try
+                {
+                    graph.AddNode(block.Name, id, props);
+                }
+                catch (DuplicateNodeError ex)
+                {
+                    throw new GraphError($"duplicate node row: {ex.Message}");
                 }
             }
-            else
-            {
-                currentBlock.Add(line);
-            }
         }
-        if (currentBlock.Count > 0)
-            blocks.Add(currentBlock);
 
-        foreach (var blockLines in blocks)
+        foreach (var block in doc.Blocks)
         {
-            var header = blockLines[0];
-            var (kind, typeName) = ParseBlockHeader(header, "FromIson");
-
-            if (blockLines.Count < 2)
+            if (block.Kind != "edges") continue;
+            foreach (var row in block.Rows)
             {
-                throw new GraphError(
-                    $"FromIson: block '{header}' has no field-name line");
-            }
-
-            var fields = SplitFields(blockLines[1]);
-
-            for (var r = 2; r < blockLines.Count; r++)
-            {
-                var dataLine = blockLines[r];
-                var values = SplitFields(dataLine);
-                if (values.Count != fields.Count)
-                {
+                row.TryGetValue("source", out var rawSource);
+                row.TryGetValue("target", out var rawTarget);
+                if (rawSource is not Reference source || rawTarget is not Reference target)
                     throw new GraphError(
-                        $"FromIson: row in block '{header}' has {values.Count} values but " +
-                        $"the header declares {fields.Count} fields: {dataLine}");
+                        "FromIson: Invalid node reference: edge row is missing a source or target");
+
+                var props = new Dictionary<string, string>();
+                foreach (var kv in row)
+                {
+                    if (kv.Key == "source" || kv.Key == "target") continue;
+                    var text = ValueText(kv.Value);
+                    if (text is not null) props[kv.Key] = text;
                 }
-                graph.AddRowFromProps(kind, typeName, fields, values, "FromIson", dataLine);
+                var sourceRef = new NodeRef(source.Type ?? string.Empty, source.Id);
+                var targetRef = new NodeRef(target.Type ?? string.Empty, target.Id);
+                foreach (var end in new[] { sourceRef, targetRef })
+                {
+                    if (!graph.HasNode(end.Type, end.Id))
+                        throw new GraphError(
+                            $"Invalid node reference: :{end.Type}:{end.Id} has not been defined");
+                }
+                try
+                {
+                    graph.AddEdge(block.Name, sourceRef, targetRef, props);
+                }
+                catch (DuplicateEdgeError ex)
+                {
+                    throw new GraphError($"duplicate edge row: {ex.Message}");
+                }
             }
         }
 
         return graph;
     }
 
-    /// <summary>
-    /// Parse a graph from the ISONL streaming format (one row per line,
-    /// "kind.type|fields|values"). Malformed lines throw <see cref="GraphError"/>.
-    /// </summary>
+    /// <summary>Parse a graph from ISON.</summary>
+    /// <remarks>
+    /// Parser failures are rewrapped as <see cref="GraphError"/> so the public
+    /// contract is unchanged by routing through Ison.Parser.
+    /// </remarks>
+    public static ISONGraph FromIson(string text, string name = "graph")
+        => BuildFromDocument(ParseOrThrow(() => IsonParser.Ison.Loads(text), "FromIson"), name);
+
+    /// <summary>Parse a graph from ISONL.</summary>
     public static ISONGraph FromIsonl(string text, string name = "graph")
+        => BuildFromDocument(ParseOrThrow(() => IsonParser.Ison.LoadsIsonl(text), "FromIsonl"), name);
+
+    private static Document ParseOrThrow(Func<Document> parse, string context)
     {
-        var graph = new ISONGraph(name);
-
-        foreach (var rawLine in text.Split('\n'))
+        try
         {
-            var line = rawLine.Trim();
-            if (line.Length == 0)
-                continue;
-
-            var parts = SplitPipeAware(line);
-            if (parts.Count != 3)
-            {
-                throw new GraphError(
-                    $"FromIsonl: malformed line (expected 'kind.type|fields|values'): {line}");
-            }
-
-            var (kind, typeName) = ParseBlockHeader(parts[0], "FromIsonl");
-            var fields = SplitFields(parts[1]);
-            var values = SplitFields(parts[2]);
-
-            if (fields.Count != values.Count)
-            {
-                throw new GraphError(
-                    $"FromIsonl: line for '{parts[0]}' has {values.Count} values but " +
-                    $"declares {fields.Count} fields: {line}");
-            }
-
-            graph.AddRowFromProps(kind, typeName, fields, values, "FromIsonl", line);
+            return parse();
         }
-
-        return graph;
+        catch (IsonParser.IsonException ex)
+        {
+            // "malformed block header" / "malformed line" are the phrases the
+            // hand-rolled parser used; keep them so callers matching on the
+            // message still work.
+            var kind = context == "FromIsonl" ? "malformed line" : "malformed block header";
+            throw new GraphError($"{context}: {kind}: {ex.Message}");
+        }
     }
 
-    // =========================================================================
-    // File I/O
-    // =========================================================================
-
-    /// <summary>Save the graph to a file ('ison', 'isonl', or 'auto' by extension).</summary>
     public void Save(string path, string format = "auto")
     {
         var actualFormat = format;

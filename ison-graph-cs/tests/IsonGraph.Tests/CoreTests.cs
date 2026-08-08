@@ -944,6 +944,6 @@ public class QueryPatternTests
     [Fact]
     public void InvalidPatternThrows()
     {
-        Assert.Throws<GraphError>(() => _graph.Query("nonsense"));
+        Assert.ThrowsAny<GraphError>(() => _graph.Query("nonsense"));
     }
 }

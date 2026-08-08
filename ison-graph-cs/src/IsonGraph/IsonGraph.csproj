@@ -13,6 +13,10 @@
     <InternalsVisibleTo Include="IsonGraph.Tests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Ison.Parser" Version="1.1.1" />
+  </ItemGroup>
+
   <PropertyGroup>
     <PackageId>IsonGraph</PackageId>
     <Version>1.1.0</Version>
