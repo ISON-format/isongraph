@@ -31,9 +31,9 @@ dependencies = [
 
 [[package]]
 name = "ison-rs"
-version = "1.0.1"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6bc9f9e8a0c672c682a6c2b83bd96a0be69b92bc7aef273d72ad9dd81076fecd"
+checksum = "a783529fd65711ab43f68a0cfb4c0653a236cfc20ee5182db37771a2a6ab601c"
 dependencies = [
  "serde",
  "serde_json",

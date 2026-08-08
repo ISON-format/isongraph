@@ -14,7 +14,7 @@ keywords = ["ison", "graph", "property-graph", "multi-hop", "traversal"]
 categories = ["data-structures", "database", "parser-implementations"]
 
 [dependencies]
-ison-rs = "1.0.1"
+ison-rs = "1.1.0"
 thiserror = "2.0"
 regex = "1.12"
 serde = { version = "1.0", features = ["derive"], optional = true }

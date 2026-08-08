@@ -21,6 +21,11 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::Path as StdPath;
 use std::sync::OnceLock;
+use ison_rs::{
+    dumps_canonical, dumps_canonical_isonl, loads, loads_isonl,
+    Block as IsonBlock, Document as IsonDocument, Reference as IsonReference,
+    Value as IsonValue,
+};
 use thiserror::Error;
 use regex::Regex;
 
@@ -386,11 +391,57 @@ impl ISONGraph {
     /// here would build a graph that fails on to_ison()/to_isonl()
     /// round-trip instead of at construction.
     fn check_identifier(kind: &str, value: &str) -> Result<()> {
-        if value.contains(':') || value.contains('|') {
+        // Types become block names, which ISONL additionally cannot quote;
+        // ids only have to survive a reference, which has no quoting at all.
+        let is_type = kind.to_lowercase().contains("type");
+        let bad = value.is_empty()
+            || value.chars().any(|ch| {
+                ch.is_whitespace()
+                    || ch == ':'
+                    || ch == '|'
+                    || (is_type && (ch == '"' || ch == '\\'))
+            });
+        if bad {
             return Err(GraphError::InvalidIdentifier(format!(
-                "{} must not contain ':' or '|': {:?}",
-                kind, value
+                "{} {:?} is not representable: it must not be empty or contain \
+                 whitespace, ':' or '|'{}",
+                kind,
+                value,
+                if is_type { ", '\"' or '\\'" } else { "" }
             )));
+        }
+        Ok(())
+    }
+
+    /// Reject property names that cannot survive a serialization round trip.
+    ///
+    /// Property names become ISON field names, and the format quotes values
+    /// but not names: a space splits the field in two, ':' has the remainder
+    /// eaten as a type annotation, '.' is a dot path, and a leading '#' turns
+    /// the header into a comment and loses the whole block.
+    fn check_property_names<'a, I>(kind: &str, names: I) -> Result<()>
+    where
+        I: IntoIterator<Item = &'a str>,
+    {
+        for name in names {
+            let bad = name.is_empty()
+                || name.starts_with('#')
+                || name.chars().any(|ch| {
+                    ch.is_whitespace()
+                        || ch == ':'
+                        || ch == '|'
+                        || ch == '"'
+                        || ch == '\\'
+                        || ch == '.'
+                });
+            if bad {
+                return Err(GraphError::InvalidIdentifier(format!(
+                    "{} name {:?} cannot be encoded: property names must not be \
+                     empty, start with '#', or contain whitespace, ':', '|', \
+                     '\"', '\\' or '.'",
+                    kind, name
+                )));
+            }
         }
         Ok(())
     }
@@ -403,6 +454,7 @@ impl ISONGraph {
     ) -> Result<&Node> {
         Self::check_identifier("Node type", node_type)?;
         Self::check_identifier("Node id", node_id)?;
+        Self::check_property_names("Node property", properties.iter().map(|(k, _)| *k))?;
 
         let type_nodes = self.nodes.entry(node_type.to_string()).or_default();
 
@@ -529,6 +581,7 @@ impl ISONGraph {
         properties: Vec<(&str, &str)>,
     ) -> Result<()> {
         Self::check_identifier("Relationship type", rel_type)?;
+        Self::check_property_names("Edge property", properties.iter().map(|(k, _)| *k))?;
 
         // Validate nodes exist
         if !self.has_node(source.0, source.1) {
@@ -1110,47 +1163,6 @@ impl ISONGraph {
     // Serialization
     // =========================================================================
 
-    /// Quote a field value for ISON/ISONL output (standardized rule across
-    /// all ISON ports): double-quote when the value contains a space, `|`,
-    /// `"`, a newline, a tab, or is empty; escape `"` as `\"` and newline
-    /// as `\n`.
-    fn quote_value(s: &str) -> String {
-        if s.is_empty()
-            || s.contains(' ')
-            || s.contains('|')
-            || s.contains('"')
-            || s.contains('\n')
-            || s.contains('\t')
-        {
-            let escaped = s.replace('"', "\\\"").replace('\n', "\\n");
-            format!("\"{}\"", escaped)
-        } else {
-            s.to_string()
-        }
-    }
-
-    /// Node rows within a type block, sorted by `id` (ordinal string compare).
-    fn sorted_nodes(type_nodes: &HashMap<String, Node>) -> Vec<&Node> {
-        let mut nodes: Vec<&Node> = type_nodes.values().collect();
-        nodes.sort_by(|a, b| a.id.cmp(&b.id));
-        nodes
-    }
-
-    /// Edge rows within a rel_type block, sorted by
-    /// `(source_type, source_id, target_type, target_id)` (ordinal).
-    fn sorted_edges(edges: &[Edge]) -> Vec<&Edge> {
-        let mut edges: Vec<&Edge> = edges.iter().collect();
-        edges.sort_by(|a, b| {
-            (&a.source.node_type, &a.source.id, &a.target.node_type, &a.target.id).cmp(&(
-                &b.source.node_type,
-                &b.source.id,
-                &b.target.node_type,
-                &b.target.id,
-            ))
-        });
-        edges
-    }
-
     /// Serialize graph to ISON format.
     ///
     /// Serialization is canonical: node type blocks, node rows within a
@@ -1158,442 +1170,196 @@ impl ISONGraph {
     /// (ordinal string comparison), independent of insertion order. The
     /// same logical graph always serializes to the same bytes, regardless
     /// of construction history.
-    pub fn to_ison(&self) -> String {
-        let mut blocks: Vec<String> = Vec::new();
+    /// Build the ISON Document this graph serializes to.
+    ///
+    /// ISONGraph decides *what* to emit - which blocks, which rows, which
+    /// columns - and hands every byte-level decision to ison-rs's canonical
+    /// writer: quoting, escaping, delimiters, column layout, and the final
+    /// block and row order.
+    ///
+    /// This used to be hand-rolled here, which meant ISON syntax had two
+    /// implementations per language that had to agree forever. They did not:
+    /// the id column was written unquoted, so a node id containing a space
+    /// produced output that would not reparse.
+    fn document(&self) -> IsonDocument {
+        let mut doc = IsonDocument::new();
 
-        // Serialize nodes by type
         let mut node_types: Vec<_> = self.nodes.keys().collect();
         node_types.sort();
-
         for node_type in node_types {
             let type_nodes = &self.nodes[node_type];
             if type_nodes.is_empty() {
                 continue;
             }
-            let sorted_type_nodes = Self::sorted_nodes(type_nodes);
 
-            // Collect all property keys
-            let mut prop_keys: HashSet<&String> = HashSet::new();
-            for node in &sorted_type_nodes {
-                for key in node.properties.keys() {
-                    prop_keys.insert(key);
+            let mut prop_keys: Vec<&String> = type_nodes
+                .values()
+                .flat_map(|n| n.properties.keys())
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect();
+            prop_keys.sort();
+
+            let mut block = IsonBlock::new("nodes", node_type.as_str());
+            block.fields = std::iter::once("id".to_string())
+                .chain(prop_keys.iter().map(|k| (*k).clone()))
+                .collect();
+
+            for node in type_nodes.values() {
+                let mut row: HashMap<String, IsonValue> = HashMap::new();
+                row.insert("id".to_string(), IsonValue::String(node.id.clone()));
+                for key in &prop_keys {
+                    let value = match node.properties.get(*key) {
+                        Some(v) => IsonValue::String(v.clone()),
+                        None => IsonValue::Null,
+                    };
+                    row.insert((*key).clone(), value);
                 }
+                block.rows.push(row);
             }
-            let mut sorted_keys: Vec<_> = prop_keys.into_iter().collect();
-            sorted_keys.sort();
-
-            let mut lines: Vec<String> = Vec::new();
-            lines.push(format!("nodes.{}", node_type));
-
-            let mut fields: Vec<&str> = vec!["id"];
-            for k in &sorted_keys {
-                fields.push(k);
-            }
-            lines.push(fields.join(" "));
-
-            for node in &sorted_type_nodes {
-                let mut values: Vec<String> = vec![Self::quote_value(&node.id)];
-                for k in &sorted_keys {
-                    let val = node.properties.get(*k).map(|s| s.as_str()).unwrap_or("null");
-                    values.push(Self::quote_value(val));
-                }
-                lines.push(values.join(" "));
-            }
-
-            blocks.push(lines.join("\n"));
+            doc.blocks.push(block);
         }
 
-        // Serialize edges by type
         let mut edge_types: Vec<_> = self.edges.keys().collect();
         edge_types.sort();
-
         for rel_type in edge_types {
             let edges = &self.edges[rel_type];
             if edges.is_empty() {
                 continue;
             }
-            let sorted_type_edges = Self::sorted_edges(edges);
 
-            // Collect all property keys
-            let mut prop_keys: HashSet<&String> = HashSet::new();
-            for edge in &sorted_type_edges {
-                for key in edge.properties.keys() {
-                    prop_keys.insert(key);
-                }
-            }
-            let mut sorted_keys: Vec<_> = prop_keys.into_iter().collect();
-            sorted_keys.sort();
-
-            let mut lines: Vec<String> = Vec::new();
-            lines.push(format!("edges.{}", rel_type));
-
-            let mut fields: Vec<&str> = vec!["source", "target"];
-            for k in &sorted_keys {
-                fields.push(k);
-            }
-            lines.push(fields.join(" "));
-
-            for edge in &sorted_type_edges {
-                let source_ref = Self::quote_value(&edge.source.to_ison_ref());
-                let target_ref = Self::quote_value(&edge.target.to_ison_ref());
-                let mut values: Vec<String> = vec![source_ref, target_ref];
-                for k in &sorted_keys {
-                    let val = edge.properties.get(*k).map(|s| s.as_str()).unwrap_or("null");
-                    values.push(Self::quote_value(val));
-                }
-                lines.push(values.join(" "));
-            }
-
-            blocks.push(lines.join("\n"));
-        }
-
-        blocks.join("\n\n")
-    }
-
-    /// Serialize graph to ISONL streaming format
-    pub fn to_isonl(&self) -> String {
-        let mut lines: Vec<String> = Vec::new();
-
-        // Serialize nodes (type blocks, then rows, both sorted)
-        let mut node_types: Vec<_> = self.nodes.keys().collect();
-        node_types.sort();
-
-        for node_type in node_types {
-            let type_nodes = &self.nodes[node_type];
-            for node in Self::sorted_nodes(type_nodes) {
-                let mut prop_keys: Vec<_> = node.properties.keys().collect();
-                prop_keys.sort();
-
-                let fields: Vec<&str> = std::iter::once("id")
-                    .chain(prop_keys.iter().map(|s| s.as_str()))
-                    .collect();
-
-                let values: Vec<String> = std::iter::once(Self::quote_value(&node.id))
-                    .chain(prop_keys.iter().map(|k| {
-                        node.properties
-                            .get(*k)
-                            .map(|v| Self::quote_value(v))
-                            .unwrap_or_else(|| "null".to_string())
-                    }))
-                    .collect();
-
-                lines.push(format!(
-                    "nodes.{}|{}|{}",
-                    node.node_type,
-                    fields.join(" "),
-                    values.join(" ")
-                ));
-            }
-        }
-
-        // Serialize edges (type blocks, then rows, both sorted)
-        let mut edge_types: Vec<_> = self.edges.keys().collect();
-        edge_types.sort();
-
-        for rel_type in edge_types {
-            let edges = &self.edges[rel_type];
-            for edge in Self::sorted_edges(edges) {
-                let mut prop_keys: Vec<_> = edge.properties.keys().collect();
-                prop_keys.sort();
-
-                let fields: Vec<&str> = ["source", "target"]
-                    .iter()
-                    .copied()
-                    .chain(prop_keys.iter().map(|s| s.as_str()))
-                    .collect();
-
-                let values: Vec<String> = [
-                    Self::quote_value(&edge.source.to_ison_ref()),
-                    Self::quote_value(&edge.target.to_ison_ref()),
-                ]
+            let mut prop_keys: Vec<&String> = edges
+                .iter()
+                .flat_map(|e| e.properties.keys())
+                .collect::<HashSet<_>>()
                 .into_iter()
-                .chain(prop_keys.iter().map(|k| {
-                    edge.properties
-                        .get(*k)
-                        .map(|v| Self::quote_value(v))
-                        .unwrap_or_else(|| "null".to_string())
-                }))
+                .collect();
+            prop_keys.sort();
+
+            let mut block = IsonBlock::new("edges", rel_type.as_str());
+            block.fields = ["source".to_string(), "target".to_string()]
+                .into_iter()
+                .chain(prop_keys.iter().map(|k| (*k).clone()))
                 .collect();
 
-                lines.push(format!(
-                    "edges.{}|{}|{}",
-                    rel_type,
-                    fields.join(" "),
-                    values.join(" ")
-                ));
+            for edge in edges {
+                let mut row: HashMap<String, IsonValue> = HashMap::new();
+                row.insert(
+                    "source".to_string(),
+                    IsonValue::Reference(IsonReference::with_type(
+                        edge.source.id.clone(),
+                        edge.source.node_type.clone(),
+                    )),
+                );
+                row.insert(
+                    "target".to_string(),
+                    IsonValue::Reference(IsonReference::with_type(
+                        edge.target.id.clone(),
+                        edge.target.node_type.clone(),
+                    )),
+                );
+                for key in &prop_keys {
+                    let value = match edge.properties.get(*key) {
+                        Some(v) => IsonValue::String(v.clone()),
+                        None => IsonValue::Null,
+                    };
+                    row.insert((*key).clone(), value);
+                }
+                block.rows.push(row);
             }
+            doc.blocks.push(block);
         }
 
-        lines.join("\n")
+        doc
     }
 
-    // =========================================================================
-    // Deserialization (ISON/ISONL Parsing)
-    // =========================================================================
-
-    /// Helper to parse node reference string ":type:id"
-    fn parse_node_ref(s: &str) -> Result<NodeId> {
-        if !s.starts_with(':') {
-            return Err(GraphError::ParseError(format!("Invalid node reference: {}", s)));
-        }
-        let rest = &s[1..];
-        let parts: Vec<&str> = rest.splitn(2, ':').collect();
-        if parts.len() != 2 {
-            return Err(GraphError::ParseError(format!("Invalid node reference: {}", s)));
-        }
-        Ok(NodeId::new(parts[0], parts[1]))
-    }
-
-    /// Helper to split a row into fields on whitespace, respecting quotes.
+    /// Serialize graph to canonical ISON (ISONCS).
     ///
-    /// Inverse of [`Self::quote_value`]: inside a double-quoted field,
-    /// `\"` decodes to `"` and `\n` decodes to a newline; a quoted empty
-    /// string (`""`) yields an empty field.
-    fn split_fields(s: &str) -> Vec<String> {
-        let mut result = Vec::new();
-        let mut current = String::new();
-        let mut in_quotes = false;
-        let mut was_quoted = false;
-        let mut chars = s.chars().peekable();
-
-        while let Some(c) = chars.next() {
-            if in_quotes {
-                match c {
-                    '\\' => match chars.peek() {
-                        Some('"') => {
-                            current.push('"');
-                            chars.next();
-                        }
-                        Some('n') => {
-                            current.push('\n');
-                            chars.next();
-                        }
-                        _ => current.push('\\'),
-                    },
-                    '"' => in_quotes = false,
-                    _ => current.push(c),
-                }
-            } else {
-                match c {
-                    '"' => {
-                        in_quotes = true;
-                        was_quoted = true;
-                    }
-                    ' ' | '\t' => {
-                        if !current.is_empty() || was_quoted {
-                            result.push(std::mem::take(&mut current));
-                        }
-                        was_quoted = false;
-                    }
-                    _ => current.push(c),
-                }
-            }
-        }
-        if !current.is_empty() || was_quoted {
-            result.push(current);
-        }
-        result
+    /// Output is canonical: the same logical graph always serializes to the
+    /// same bytes regardless of construction order. Block, row and column
+    /// order are the canonical writer's, not ISONGraph's.
+    pub fn to_ison(&self) -> String {
+        dumps_canonical(&self.document()).unwrap_or_default()
     }
 
-    /// Parse graph from ISON format
-    pub fn from_ison(text: &str, name: Option<&str>) -> Result<Self> {
-        let graph_name = name.unwrap_or("graph");
-        let mut graph = ISONGraph::new(graph_name);
+    /// Serialize graph to canonical ISONL. Row order matches [`to_ison`].
+    pub fn to_isonl(&self) -> String {
+        dumps_canonical_isonl(&self.document()).unwrap_or_default()
+    }
 
-        // Split into blocks (separated by blank lines)
-        let mut blocks: Vec<String> = Vec::new();
-        let mut current_block = String::new();
-
-        for line in text.lines() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                if !current_block.is_empty() {
-                    blocks.push(current_block.clone());
-                    current_block.clear();
-                }
-            } else {
-                if !current_block.is_empty() {
-                    current_block.push('\n');
-                }
-                current_block.push_str(trimmed);
-            }
+    fn value_text(value: &IsonValue) -> Option<String> {
+        match value {
+            IsonValue::Null => None,
+            IsonValue::Bool(b) => Some(b.to_string()),
+            IsonValue::Int(i) => Some(i.to_string()),
+            IsonValue::Float(f) => Some(f.to_string()),
+            IsonValue::String(s) => Some(s.clone()),
+            IsonValue::Reference(r) => Some(r.to_ison()),
         }
-        if !current_block.is_empty() {
-            blocks.push(current_block);
-        }
+    }
 
-        // Parse each block
-        for block in blocks {
-            let mut lines = block.lines();
-            let header_line = match lines.next() {
-                Some(h) => h.trim(),
-                None => continue,
-            };
+    fn build_from_document(doc: &IsonDocument, name: &str) -> Result<Self> {
+        let mut graph = ISONGraph::new(name);
 
-            // Parse block header (nodes.type or edges.type)
-            let dot_pos = header_line.find('.').ok_or_else(|| {
-                GraphError::ParseError(format!(
-                    "Invalid block header '{}': expected 'nodes.<type>' or 'edges.<type>'",
-                    header_line
-                ))
-            })?;
-
-            let kind = &header_line[..dot_pos];
-            let type_name = &header_line[dot_pos + 1..];
-
-            if kind != "nodes" && kind != "edges" {
+        for block in &doc.blocks {
+            if block.kind != "nodes" && block.kind != "edges" {
                 return Err(GraphError::ParseError(format!(
-                    "Invalid block header '{}': kind must be 'nodes' or 'edges'",
-                    header_line
+                    "unknown block kind {:?} (expected 'nodes' or 'edges')",
+                    block.kind
                 )));
             }
-
-            // Read field names
-            let fields_line = lines
-                .next()
-                .map(|f| f.trim())
-                .ok_or_else(|| {
-                    GraphError::ParseError(format!(
-                        "Block '{}' is missing its field header line",
-                        header_line
-                    ))
-                })?;
-            let fields = Self::split_fields(fields_line);
-
-            // Read data rows
-            for data_line in lines {
-                let trimmed = data_line.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-
-                let values = Self::split_fields(trimmed);
-                if values.len() != fields.len() {
-                    return Err(GraphError::ParseError(format!(
-                        "Malformed row in block '{}': expected {} fields, found {} in row '{}'",
-                        header_line,
-                        fields.len(),
-                        values.len(),
-                        trimmed
-                    )));
-                }
-
-                // Build properties map
-                let mut props: HashMap<String, String> = HashMap::new();
-                for (i, field) in fields.iter().enumerate() {
-                    props.insert(field.clone(), values[i].clone());
-                }
-
-                if kind == "nodes" {
-                    let node_id = props.get("id").cloned().unwrap_or_default();
-                    let node_props: Vec<(&str, &str)> = props
-                        .iter()
-                        .filter(|(k, _)| k.as_str() != "id")
-                        .map(|(k, v)| (k.as_str(), v.as_str()))
-                        .collect();
-                    graph.add_node(type_name, &node_id, node_props)?;
-                } else if kind == "edges" {
-                    let source_str = props.get("source").cloned().unwrap_or_default();
-                    let target_str = props.get("target").cloned().unwrap_or_default();
-                    let source = Self::parse_node_ref(&source_str)?;
-                    let target = Self::parse_node_ref(&target_str)?;
-                    let edge_props: Vec<(&str, &str)> = props
-                        .iter()
-                        .filter(|(k, _)| k.as_str() != "source" && k.as_str() != "target")
-                        .map(|(k, v)| (k.as_str(), v.as_str()))
-                        .collect();
-                    graph.add_edge(
-                        type_name,
-                        (&source.node_type, &source.id),
-                        (&target.node_type, &target.id),
-                        edge_props,
-                    )?;
-                }
-            }
         }
 
-        Ok(graph)
-    }
-
-    /// Parse graph from ISONL streaming format
-    pub fn from_isonl(text: &str, name: Option<&str>) -> Result<Self> {
-        let graph_name = name.unwrap_or("graph");
-        let mut graph = ISONGraph::new(graph_name);
-
-        for line in text.lines() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
+        // Nodes first regardless of block order - the canonical writer sorts
+        // blocks by name, which puts 'edges' ahead of 'nodes'.
+        for block in &doc.blocks {
+            if block.kind != "nodes" {
                 continue;
             }
-
-            // Split by pipe: kind.type|fields|values
-            let parts: Vec<&str> = trimmed.splitn(3, '|').collect();
-            if parts.len() != 3 {
-                return Err(GraphError::ParseError(format!(
-                    "Malformed ISONL line '{}': expected 'kind.type|fields|values'",
-                    trimmed
-                )));
-            }
-
-            // Parse header
-            let dot_pos = parts[0].find('.').ok_or_else(|| {
-                GraphError::ParseError(format!(
-                    "Invalid ISONL header '{}': expected 'nodes.<type>' or 'edges.<type>'",
-                    parts[0]
-                ))
-            })?;
-
-            let kind = &parts[0][..dot_pos];
-            let type_name = &parts[0][dot_pos + 1..];
-
-            if kind != "nodes" && kind != "edges" {
-                return Err(GraphError::ParseError(format!(
-                    "Invalid ISONL header '{}': kind must be 'nodes' or 'edges'",
-                    parts[0]
-                )));
-            }
-
-            let fields = Self::split_fields(parts[1]);
-            let values = Self::split_fields(parts[2]);
-
-            if fields.len() != values.len() {
-                return Err(GraphError::ParseError(format!(
-                    "Malformed ISONL line '{}': expected {} fields, found {} values",
-                    trimmed,
-                    fields.len(),
-                    values.len()
-                )));
-            }
-
-            // Build properties map
-            let mut props: HashMap<String, String> = HashMap::new();
-            for (i, field) in fields.iter().enumerate() {
-                props.insert(field.clone(), values[i].clone());
-            }
-
-            if kind == "nodes" {
-                let node_id = props.get("id").cloned().unwrap_or_default();
-                let node_props: Vec<(&str, &str)> = props
+            for row in &block.rows {
+                let id = row
+                    .get("id")
+                    .and_then(Self::value_text)
+                    .ok_or_else(|| GraphError::ParseError("row has no id".into()))?;
+                let props: Vec<(String, String)> = row
                     .iter()
                     .filter(|(k, _)| k.as_str() != "id")
-                    .map(|(k, v)| (k.as_str(), v.as_str()))
+                    .filter_map(|(k, v)| Self::value_text(v).map(|t| (k.clone(), t)))
                     .collect();
-                graph.add_node(type_name, &node_id, node_props)?;
-            } else if kind == "edges" {
-                let source_str = props.get("source").cloned().unwrap_or_default();
-                let target_str = props.get("target").cloned().unwrap_or_default();
-                let source = Self::parse_node_ref(&source_str)?;
-                let target = Self::parse_node_ref(&target_str)?;
-                let edge_props: Vec<(&str, &str)> = props
+                let borrowed: Vec<(&str, &str)> =
+                    props.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+                graph.add_node(&block.name, &id, borrowed)?;
+            }
+        }
+
+        for block in &doc.blocks {
+            if block.kind != "edges" {
+                continue;
+            }
+            for row in &block.rows {
+                let (source, target) = match (row.get("source"), row.get("target")) {
+                    (Some(IsonValue::Reference(s)), Some(IsonValue::Reference(t))) => (
+                        (s.ref_type.clone().unwrap_or_default(), s.id.clone()),
+                        (t.ref_type.clone().unwrap_or_default(), t.id.clone()),
+                    ),
+                    _ => {
+                        return Err(GraphError::ParseError(
+                            "edge row is missing a source or target reference".into(),
+                        ))
+                    }
+                };
+                let props: Vec<(String, String)> = row
                     .iter()
                     .filter(|(k, _)| k.as_str() != "source" && k.as_str() != "target")
-                    .map(|(k, v)| (k.as_str(), v.as_str()))
+                    .filter_map(|(k, v)| Self::value_text(v).map(|t| (k.clone(), t)))
                     .collect();
+                let borrowed: Vec<(&str, &str)> =
+                    props.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
                 graph.add_edge(
-                    type_name,
-                    (&source.node_type, &source.id),
-                    (&target.node_type, &target.id),
-                    edge_props,
+                    &block.name,
+                    (&source.0, &source.1),
+                    (&target.0, &target.1),
+                    borrowed,
                 )?;
             }
         }
@@ -1601,11 +1367,20 @@ impl ISONGraph {
         Ok(graph)
     }
 
-    // =========================================================================
-    // File I/O
-    // =========================================================================
+    /// Parse a graph from ISON.
+    pub fn from_ison(text: &str, name: Option<&str>) -> Result<Self> {
+        let doc = loads(text)
+            .map_err(|e| GraphError::ParseError(format!("{}", e)))?;
+        Self::build_from_document(&doc, name.unwrap_or("graph"))
+    }
 
-    /// Save graph to file
+    /// Parse a graph from ISONL.
+    pub fn from_isonl(text: &str, name: Option<&str>) -> Result<Self> {
+        let doc = loads_isonl(text)
+            .map_err(|e| GraphError::ParseError(format!("{}", e)))?;
+        Self::build_from_document(&doc, name.unwrap_or("graph"))
+    }
+
     pub fn save<P: AsRef<StdPath>>(&self, path: P, format: Option<&str>) -> Result<()> {
         let path = path.as_ref();
         let actual_format = format.unwrap_or_else(|| {
@@ -2163,14 +1938,37 @@ mod tests {
     }
 
     #[test]
-    fn test_valid_identifiers_with_spaces_still_allowed() {
+    fn test_unrepresentable_identifiers_are_rejected() {
+        // Whitespace and empty used to be accepted and then blow up on round
+        // trip: ':a b:1' splits mid-reference, and an id column holding 'a b'
+        // reparses as two values. Rejected at construction instead.
+        for bad in ["a b", "a\tb", "a\nb", ""] {
+            let mut graph = ISONGraph::new("test");
+            assert!(graph.add_node(bad, "1", vec![]).is_err(), "type {:?}", bad);
+            assert!(graph.add_node("p", bad, vec![]).is_err(), "id {:?}", bad);
+        }
+
+        // ISONL cannot quote a block name, so types are stricter than ids.
+        for bad in ["a\"b", "a\\b"] {
+            let mut graph = ISONGraph::new("test");
+            assert!(graph.add_node(bad, "1", vec![]).is_err(), "type {:?}", bad);
+            assert!(graph.add_node("p", bad, vec![]).is_ok(), "id {:?}", bad);
+        }
+    }
+
+    #[test]
+    fn test_valid_identifiers_still_allowed() {
         let mut graph = ISONGraph::new("test");
-        graph.add_node("a type", "an id-1", vec![]).unwrap();
-        graph.add_node("b", "2", vec![]).unwrap();
+        graph.add_node("a-type", "an-id-1", vec![]).unwrap();
+        graph.add_node("b.c", "#2", vec![]).unwrap();
         graph
-            .add_edge("shares border with", ("a type", "an id-1"), ("b", "2"), vec![])
+            .add_edge("SHARES_BORDER_WITH", ("a-type", "an-id-1"), ("b.c", "#2"), vec![])
             .unwrap();
         assert_eq!(graph.edge_count(), 1);
+
+        let restored = ISONGraph::from_ison(&graph.to_ison(), None).unwrap();
+        assert_eq!(restored.node_count(), 2);
+        assert_eq!(restored.edge_count(), 1);
     }
 
     #[test]
@@ -2455,11 +2253,11 @@ source target since
             ISONGraph::from_isonl("nodes.person|id name", None),
             Err(GraphError::ParseError(_))
         ));
-        // Field/value count mismatch
-        assert!(matches!(
-            ISONGraph::from_isonl("nodes.person|id name|alice", None),
-            Err(GraphError::ParseError(_))
-        ));
+        // A short row is padded with null by the shared ISON parser rather
+        // than rejected - every port behaves this way now that emission and
+        // parsing both go through it, so this is no longer an error here.
+        let padded = ISONGraph::from_isonl("nodes.person|id name|alice", None).unwrap();
+        assert_eq!(padded.node_count(), 1);
         // Header without '.'
         assert!(matches!(
             ISONGraph::from_isonl("nodesperson|id|alice", None),
@@ -2750,44 +2548,44 @@ source target since
     // change everywhere.
     // =========================================================================
 
-    const CANONICAL_GOLDEN_ISON: &str = "nodes.company
+    const CANONICAL_GOLDEN_ISON: &str = r#"edges.KNOWS
+since source target
+"2020" :person:1 :person:2
+"2021" :person:10 :person:1
+
+edges.WORKS_AT
+role source target
+"Lead Engineer" :person:1 :company:acme
+
+edges.WORKS_ON
+hours source target
+"3" :person:10 :project:p1
+"5" :person:2 :project:p1
+
+nodes.company
 id name
-acme \"Acme Corp\"
+acme "Acme Corp"
 
 nodes.person
 id age name
-1 30 Alice
-10 22 Jax
-2 25 Bob
+"1" "30" Alice
+"10" "22" Jax
+"2" "25" Bob
 
 nodes.project
 id name tag
-p1 Alpha \"a|b\"
+p1 Alpha a|b"#;
 
-edges.KNOWS
-source target since
-:person:1 :person:2 2020
-:person:10 :person:1 2021
-
-edges.WORKS_AT
-source target role
-:person:1 :company:acme \"Lead Engineer\"
-
-edges.WORKS_ON
-source target hours
-:person:10 :project:p1 3
-:person:2 :project:p1 5";
-
-    const CANONICAL_GOLDEN_ISONL: &str = "nodes.company|id name|acme \"Acme Corp\"
-nodes.person|id age name|1 30 Alice
-nodes.person|id age name|10 22 Jax
-nodes.person|id age name|2 25 Bob
-nodes.project|id name tag|p1 Alpha \"a|b\"
-edges.KNOWS|source target since|:person:1 :person:2 2020
-edges.KNOWS|source target since|:person:10 :person:1 2021
-edges.WORKS_AT|source target role|:person:1 :company:acme \"Lead Engineer\"
-edges.WORKS_ON|source target hours|:person:10 :project:p1 3
-edges.WORKS_ON|source target hours|:person:2 :project:p1 5";
+    const CANONICAL_GOLDEN_ISONL: &str = r#"edges.KNOWS|since source target|"2020" :person:1 :person:2
+edges.KNOWS|since source target|"2021" :person:10 :person:1
+edges.WORKS_AT|role source target|"Lead Engineer" :person:1 :company:acme
+edges.WORKS_ON|hours source target|"3" :person:10 :project:p1
+edges.WORKS_ON|hours source target|"5" :person:2 :project:p1
+nodes.company|id name|acme "Acme Corp"
+nodes.person|id age name|"1" "30" Alice
+nodes.person|id age name|"10" "22" Jax
+nodes.person|id age name|"2" "25" Bob
+nodes.project|id name tag|p1 Alpha "a\|b""#;
 
     #[allow(clippy::type_complexity)]
     fn build_canonical_fixture(order: usize) -> ISONGraph {
@@ -2851,7 +2649,14 @@ edges.WORKS_ON|source target hours|:person:2 :project:p1 5";
 ").nth(1).unwrap().split("
 
 ").next().unwrap();
-        let ids: Vec<&str> = person_block.lines().skip(1).map(|l| l.split(' ').next().unwrap()).collect();
+        // Ids are quoted because the fixture uses string ids - the canonical
+        // writer quotes a string that would otherwise reparse as a number, so
+        // the round trip stays lossless. Strip that to read the order.
+        let ids: Vec<&str> = person_block
+            .lines()
+            .skip(1)
+            .map(|l| l.split(' ').next().unwrap().trim_matches('"'))
+            .collect();
         assert_eq!(ids, vec!["1", "10", "2"]);
     }
 
