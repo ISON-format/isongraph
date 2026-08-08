@@ -26,6 +26,15 @@
 #ifndef ISON_GRAPH_HPP
 #define ISON_GRAPH_HPP
 
+// ISON syntax lives in one place. Including the parser rather than
+// vendoring a copy means a parser fix reaches ISONGraph on the next
+// build instead of when someone remembers to re-cut the copy.
+#include "ison_parser.hpp"
+
+#include <memory>
+#include <set>
+#include <algorithm>
+
 #include <string>
 #include <vector>
 #include <map>
@@ -246,6 +255,7 @@ public:
                   const Properties& properties = {}) {
         checkIdentifier("Node type", nodeType);
         checkIdentifier("Node id", nodeId);
+        checkPropertyNames("Node property", properties);
         auto& typeNodes = nodes_[nodeType];
         if (typeNodes.find(nodeId) != typeNodes.end()) {
             throw DuplicateNodeError(NodeRef(nodeType, nodeId));
@@ -408,6 +418,7 @@ public:
     Edge addEdge(const std::string& relType, const NodeRef& source, const NodeRef& target,
                  const Properties& properties = {}) {
         checkIdentifier("Relationship type", relType);
+        checkPropertyNames("Edge property", properties);
 
         if (!hasNode(source)) {
             throw NodeNotFoundError(source);
@@ -855,178 +866,114 @@ public:
     // Serialization
     // =========================================================================
 
-    /** Serialize graph to ISON format */
-    std::string toIson() const {
-        std::ostringstream ss;
-        std::vector<std::string> blocks;
+    /**
+     * Build the ISON Document this graph serializes to.
+     *
+     * ISONGraph decides *what* to emit - which blocks, which rows, which
+     * columns - and hands every byte-level decision to ison_parser's
+     * canonical writer: quoting, escaping, delimiters, column layout, and
+     * the final block and row order.
+     *
+     * This used to be hand-rolled here, which meant ISON syntax had two
+     * implementations per language that had to agree forever. They did not:
+     * the id column was written unquoted, so a node id containing a space
+     * produced output that would not reparse.
+     */
+    ison::Document buildDocument() const {
+        ison::Document doc;
 
-        // Serialize nodes by type
-        std::vector<std::string> sortedNodeTypes;
-        for (const auto& [type, _] : nodes_) {
-            sortedNodeTypes.push_back(type);
+        std::vector<std::string> nodeTypes;
+        for (auto it = nodes_.begin(); it != nodes_.end(); ++it) {
+            nodeTypes.push_back(it->first);
         }
-        std::sort(sortedNodeTypes.begin(), sortedNodeTypes.end());
+        std::sort(nodeTypes.begin(), nodeTypes.end());
 
-        for (const auto& nodeType : sortedNodeTypes) {
+        for (const auto& nodeType : nodeTypes) {
             const auto& typeNodes = nodes_.at(nodeType);
             if (typeNodes.empty()) continue;
-            auto sortedTypeNodes = sortedNodes(typeNodes);
 
-            // Collect all property keys
             std::set<std::string> propKeys;
-            for (const auto* node : sortedTypeNodes) {
-                for (const auto& [k, v] : node->properties) {
-                    propKeys.insert(k);
+            for (auto it = typeNodes.begin(); it != typeNodes.end(); ++it) {
+                for (auto pit = it->second.properties.begin();
+                     pit != it->second.properties.end(); ++pit) {
+                    propKeys.insert(pit->first);
                 }
             }
 
-            std::ostringstream block;
-            block << "nodes." << nodeType << "\n";
-            block << "id";
-            for (const auto& k : propKeys) {
-                block << " " << k;
-            }
-            block << "\n";
+            ison::Block block("nodes", nodeType);
+            block.fields.push_back("id");
+            for (const auto& key : propKeys) block.fields.push_back(key);
 
-            for (const auto* node : sortedTypeNodes) {
-                block << quoteValue(node->id);
-                for (const auto& k : propKeys) {
-                    auto it = node->properties.find(k);
-                    block << " " << quoteValue(it != node->properties.end() ? it->second : "null");
+            for (auto it = typeNodes.begin(); it != typeNodes.end(); ++it) {
+                const Node& node = it->second;
+                ison::Row row;
+                row["id"] = ison::Value(node.id);
+                for (const auto& key : propKeys) {
+                    auto found = node.properties.find(key);
+                    row[key] = (found == node.properties.end())
+                        ? ison::Value(nullptr)
+                        : ison::Value(found->second);
                 }
-                block << "\n";
+                block.rows.push_back(row);
             }
-
-            blocks.push_back(block.str());
+            doc.blocks.push_back(block);
         }
 
-        // Serialize edges by type
-        std::vector<std::string> sortedEdgeTypes;
-        for (const auto& [type, _] : edges_) {
-            sortedEdgeTypes.push_back(type);
+        std::vector<std::string> relTypes;
+        for (auto it = edges_.begin(); it != edges_.end(); ++it) {
+            relTypes.push_back(it->first);
         }
-        std::sort(sortedEdgeTypes.begin(), sortedEdgeTypes.end());
+        std::sort(relTypes.begin(), relTypes.end());
 
-        for (const auto& relType : sortedEdgeTypes) {
-            const auto& relEdges = edges_.at(relType);
-            if (relEdges.empty()) continue;
-            auto sortedTypeEdges = sortedEdges(relEdges);
+        for (const auto& relType : relTypes) {
+            const auto& edges = edges_.at(relType);
+            if (edges.empty()) continue;
 
-            // Collect all property keys
             std::set<std::string> propKeys;
-            for (const auto* edge : sortedTypeEdges) {
-                for (const auto& [k, v] : edge->properties) {
-                    propKeys.insert(k);
+            for (const auto& edge : edges) {
+                for (auto pit = edge.properties.begin();
+                     pit != edge.properties.end(); ++pit) {
+                    propKeys.insert(pit->first);
                 }
             }
 
-            std::ostringstream block;
-            block << "edges." << relType << "\n";
-            block << "source target";
-            for (const auto& k : propKeys) {
-                block << " " << k;
-            }
-            block << "\n";
+            ison::Block block("edges", relType);
+            block.fields.push_back("source");
+            block.fields.push_back("target");
+            for (const auto& key : propKeys) block.fields.push_back(key);
 
-            for (const auto* edge : sortedTypeEdges) {
-                block << edge->source.toIsonRef() << " " << edge->target.toIsonRef();
-                for (const auto& k : propKeys) {
-                    auto it = edge->properties.find(k);
-                    block << " " << quoteValue(it != edge->properties.end() ? it->second : "null");
+            for (const auto& edge : edges) {
+                ison::Row row;
+                row["source"] = ison::Value(std::make_shared<ison::Reference>(
+                    edge.source.id, edge.source.type));
+                row["target"] = ison::Value(std::make_shared<ison::Reference>(
+                    edge.target.id, edge.target.type));
+                for (const auto& key : propKeys) {
+                    auto found = edge.properties.find(key);
+                    row[key] = (found == edge.properties.end())
+                        ? ison::Value(nullptr)
+                        : ison::Value(found->second);
                 }
-                block << "\n";
+                block.rows.push_back(row);
             }
-
-            blocks.push_back(block.str());
+            doc.blocks.push_back(block);
         }
 
-        for (size_t i = 0; i < blocks.size(); ++i) {
-            if (i > 0) ss << "\n";
-            ss << blocks[i];
-        }
-
-        // Each block's own row-building loop terminates every row (including
-        // the last) with "\n", so the final block leaves one extra trailing
-        // newline that the other ISON ports' line-join approach never
-        // produces. Strip it so toIson() output is byte-identical across
-        // languages, not just internally order-independent.
-        std::string result = ss.str();
-        if (!result.empty() && result.back() == '\n') {
-            result.pop_back();
-        }
-        return result;
+        return doc;
     }
 
-    /** Serialize graph to ISONL streaming format */
+    /**
+     * Serialize to canonical ISON (ISONCS). The same logical graph always
+     * serializes to the same bytes regardless of construction order.
+     */
+    std::string toIson() const {
+        return ison::dumps_canonical(buildDocument());
+    }
+
+    /** Serialize to canonical ISONL. Row order matches toIson(). */
     std::string toIsonl() const {
-        std::ostringstream ss;
-
-        // Serialize nodes (type blocks, then rows, both sorted)
-        std::vector<std::string> sortedNodeTypes;
-        for (const auto& [type, _] : nodes_) {
-            sortedNodeTypes.push_back(type);
-        }
-        std::sort(sortedNodeTypes.begin(), sortedNodeTypes.end());
-
-        for (const auto& nodeType : sortedNodeTypes) {
-            for (const auto* node : sortedNodes(nodes_.at(nodeType))) {
-                std::vector<std::string> propKeys;
-                for (const auto& [k, _] : node->properties) {
-                    propKeys.push_back(k);
-                }
-                std::sort(propKeys.begin(), propKeys.end());
-
-                ss << "nodes." << node->type << "|id";
-                for (const auto& k : propKeys) {
-                    ss << " " << k;
-                }
-                ss << "|" << quoteValue(node->id);
-                for (const auto& k : propKeys) {
-                    ss << " " << quoteValue(node->properties.at(k));
-                }
-                ss << "\n";
-            }
-        }
-
-        // Serialize edges (type blocks, then rows, both sorted)
-        std::vector<std::string> sortedEdgeTypes;
-        for (const auto& [type, _] : edges_) {
-            sortedEdgeTypes.push_back(type);
-        }
-        std::sort(sortedEdgeTypes.begin(), sortedEdgeTypes.end());
-
-        for (const auto& relType : sortedEdgeTypes) {
-            for (const auto* edge : sortedEdges(edges_.at(relType))) {
-                std::vector<std::string> propKeys;
-                for (const auto& [k, _] : edge->properties) {
-                    propKeys.push_back(k);
-                }
-                std::sort(propKeys.begin(), propKeys.end());
-
-                ss << "edges." << relType << "|source target";
-                for (const auto& k : propKeys) {
-                    ss << " " << k;
-                }
-                ss << "|" << edge->source.toIsonRef() << " " << edge->target.toIsonRef();
-                for (const auto& k : propKeys) {
-                    ss << " " << quoteValue(edge->properties.at(k));
-                }
-                ss << "\n";
-            }
-        }
-
-        // See toIson(): strip the last row's trailing newline so output is
-        // byte-identical to the other ISON ports (line-join, no trailing \n).
-        std::string result = ss.str();
-        if (!result.empty() && result.back() == '\n') {
-            result.pop_back();
-        }
-        return result;
+        return ison::dumps_canonical_isonl(buildDocument());
     }
-
-    // =========================================================================
-    // Deserialization (ISON/ISONL Parsing)
-    // =========================================================================
 
 private:
     /**
@@ -1037,8 +984,48 @@ private:
      * round-trip instead of failing at construction.
      */
     static void checkIdentifier(const std::string& kind, const std::string& value) {
-        if (value.find(':') != std::string::npos || value.find('|') != std::string::npos) {
-            throw std::invalid_argument(kind + " must not contain ':' or '|': '" + value + "'");
+        // Types become block names, which ISONL additionally cannot quote;
+        // ids only have to survive a reference, which has no quoting at all.
+        bool isType = kind.find("type") != std::string::npos ||
+                      kind.find("Type") != std::string::npos;
+        bool bad = value.empty();
+        for (size_t i = 0; !bad && i < value.size(); ++i) {
+            char c = value[i];
+            bad = (c == ' ' || c == '\t' || c == '\n' || c == '\r' ||
+                   c == ':' || c == '|' ||
+                   (isType && (c == '"' || c == '\\')));
+        }
+        if (bad) {
+            throw std::invalid_argument(
+                kind + " '" + value + "' is not representable: it must not be empty "
+                "or contain whitespace, ':' or '|'" +
+                (isType ? std::string(", '\"' or '\\'") : std::string()));
+        }
+    }
+
+    /**
+     * Reject property names that cannot survive a serialization round trip.
+     *
+     * Property names become ISON field names, and the format quotes values
+     * but not names: a space splits the field in two, ':' has the remainder
+     * eaten as a type annotation, '.' is a dot path, and a leading '#' turns
+     * the header into a comment and loses the whole block.
+     */
+    static void checkPropertyNames(const std::string& kind, const Properties& props) {
+        for (Properties::const_iterator it = props.begin(); it != props.end(); ++it) {
+            const std::string& name = it->first;
+            bool bad = name.empty() || name[0] == '#';
+            for (size_t i = 0; !bad && i < name.size(); ++i) {
+                char c = name[i];
+                bad = (c == ' ' || c == '\t' || c == '\n' || c == '\r' ||
+                       c == ':' || c == '|' || c == '"' || c == '\\' || c == '.');
+            }
+            if (bad) {
+                throw std::invalid_argument(
+                    kind + " name '" + name + "' cannot be encoded: property names "
+                    "must not be empty, start with '#', or contain whitespace, "
+                    "':', '|', '\"', '\\' or '.'");
+            }
         }
     }
 
@@ -1201,210 +1188,104 @@ private:
     }
 
 public:
-    /** Parse graph from ISON format */
-    static ISONGraph fromIson(const std::string& text, const std::string& graphName = "graph") {
+    /**
+     * Turn an ISON value into the text ISONGraph stores.
+     *
+     * Every id and property in this port is a string, so a null becomes an
+     * absent property rather than the literal "null".
+     */
+    static bool valueText(const ison::Value& value, std::string& out) {
+        if (value.is_null()) return false;
+        if (value.is_string()) { out = value.as_string(); return true; }
+        if (value.is_reference()) { out = value.as_reference_ptr()->to_ison(); return true; }
+        if (value.is_bool()) { out = value.as_bool() ? "true" : "false"; return true; }
+        if (value.is_int()) { out = std::to_string(value.as_int()); return true; }
+        if (value.is_float()) { out = std::to_string(value.as_float()); return true; }
+        return false;
+    }
+
+    static ISONGraph buildFromDocument(const ison::Document& doc,
+                                       const std::string& graphName) {
         ISONGraph graph(graphName);
 
-        // Split into blocks (separated by blank lines)
-        std::vector<std::string> blocks;
-        std::istringstream iss(text);
-        std::string line;
-        std::string currentBlock;
-
-        while (std::getline(iss, line)) {
-            std::string trimmedLine = trim(line);
-            if (trimmedLine.empty()) {
-                if (!currentBlock.empty()) {
-                    blocks.push_back(currentBlock);
-                    currentBlock.clear();
-                }
-            } else {
-                if (!currentBlock.empty()) currentBlock += "\n";
-                currentBlock += trimmedLine;
+        for (size_t b = 0; b < doc.blocks.size(); ++b) {
+            const ison::Block& block = doc.blocks[b];
+            if (block.kind != "nodes" && block.kind != "edges") {
+                throw GraphError("unknown block kind '" + block.kind +
+                                 "' (expected 'nodes' or 'edges')");
             }
         }
-        if (!currentBlock.empty()) {
-            blocks.push_back(currentBlock);
+
+        // Nodes first regardless of block order - the canonical writer sorts
+        // blocks by name, which puts 'edges' ahead of 'nodes'.
+        for (size_t b = 0; b < doc.blocks.size(); ++b) {
+            const ison::Block& block = doc.blocks[b];
+            if (block.kind != "nodes") continue;
+            for (size_t r = 0; r < block.rows.size(); ++r) {
+                const ison::Row& row = block.rows[r];
+                ison::Row::const_iterator idIt = row.find("id");
+                std::string id;
+                if (idIt == row.end() || !valueText(idIt->second, id)) {
+                    throw GraphError("fromIson: node row has no id");
+                }
+                Properties props;
+                for (ison::Row::const_iterator it = row.begin(); it != row.end(); ++it) {
+                    if (it->first == "id") continue;
+                    std::string text;
+                    if (valueText(it->second, text)) props[it->first] = text;
+                }
+                graph.addNode(block.name, id, props);
+            }
         }
 
-        // Parse each block
-        for (const auto& block : blocks) {
-            std::istringstream blockStream(block);
-            std::string headerLine;
-            std::getline(blockStream, headerLine);
-            headerLine = trim(headerLine);
-
-            // Parse block header (nodes.type or edges.type)
-            size_t dotPos = headerLine.find('.');
-            if (dotPos == std::string::npos) continue;
-
-            std::string kind = headerLine.substr(0, dotPos);
-            std::string typeName = headerLine.substr(dotPos + 1);
-
-            // Read field names
-            std::string fieldsLine;
-            std::getline(blockStream, fieldsLine);
-            std::vector<std::string> fields = splitFields(trim(fieldsLine));
-
-            // Read data rows
-            std::string dataLine;
-            while (std::getline(blockStream, dataLine)) {
-                dataLine = trim(dataLine);
-                if (dataLine.empty()) continue;
-
-                std::vector<std::string> values = splitFields(dataLine);
-                if (values.size() != fields.size()) {
-                    throw GraphError("fromIson: row in block '" + headerLine + "' has "
-                        + std::to_string(values.size()) + " values but header declares "
-                        + std::to_string(fields.size()) + " fields: " + dataLine);
+        for (size_t b = 0; b < doc.blocks.size(); ++b) {
+            const ison::Block& block = doc.blocks[b];
+            if (block.kind != "edges") continue;
+            for (size_t r = 0; r < block.rows.size(); ++r) {
+                const ison::Row& row = block.rows[r];
+                ison::Row::const_iterator sIt = row.find("source");
+                ison::Row::const_iterator tIt = row.find("target");
+                if (sIt == row.end() || tIt == row.end() ||
+                    !sIt->second.is_reference() || !tIt->second.is_reference()) {
+                    throw GraphError(
+                        "fromIson: Invalid node reference: edge row is missing a "
+                        "source or target");
                 }
+                const ison::Reference& sref = *sIt->second.as_reference_ptr();
+                const ison::Reference& tref = *tIt->second.as_reference_ptr();
 
-                // Build properties map
-                std::map<std::string, std::string> props;
-                for (size_t i = 0; i < fields.size(); ++i) {
-                    props[fields[i]] = values[i];
+                Properties props;
+                for (ison::Row::const_iterator it = row.begin(); it != row.end(); ++it) {
+                    if (it->first == "source" || it->first == "target") continue;
+                    std::string text;
+                    if (valueText(it->second, text)) props[it->first] = text;
                 }
-
-                if (kind == "nodes") {
-                    auto idIt = props.find("id");
-                    if (idIt == props.end()) {
-                        throw GraphError("fromIson: block 'nodes." + typeName
-                            + "' is missing the required 'id' column in its header");
-                    }
-                    std::string nodeId = idIt->second;
-                    Properties nodeProps;
-                    for (const auto& [k, v] : props) {
-                        if (k != "id") {
-                            nodeProps[k] = v;
-                        }
-                    }
-                    try {
-                        graph.addNode(typeName, nodeId, nodeProps);
-                    } catch (const DuplicateNodeError&) {
-                        throw GraphError("fromIson: duplicate node row ':" + typeName + ":" + nodeId
-                            + "' in block 'nodes." + typeName + "'");
-                    }
-                } else if (kind == "edges") {
-                    auto srcIt = props.find("source");
-                    auto tgtIt = props.find("target");
-                    if (srcIt == props.end() || tgtIt == props.end()) {
-                        throw GraphError("fromIson: block 'edges." + typeName
-                            + "' is missing the required 'source' and/or 'target' column in its header");
-                    }
-                    NodeRef source = parseNodeRef(srcIt->second);
-                    NodeRef target = parseNodeRef(tgtIt->second);
-                    Properties edgeProps;
-                    for (const auto& [k, v] : props) {
-                        if (k != "source" && k != "target") {
-                            edgeProps[k] = v;
-                        }
-                    }
-                    try {
-                        graph.addEdge(typeName, source, target, edgeProps);
-                    } catch (const NodeNotFoundError& e) {
-                        throw GraphError("fromIson: edge in block 'edges." + typeName
-                            + "' references a node that has not been defined (" + e.what()
-                            + "); node blocks must appear before the edges that use them");
-                    } catch (const DuplicateEdgeError&) {
-                        throw GraphError("fromIson: duplicate edge row '" + srcIt->second + " -> "
-                            + tgtIt->second + "' in block 'edges." + typeName + "'");
-                    }
+                // Reference::type is optional; an untyped reference cannot name
+                // a node in this graph, so treat it as a malformed edge.
+                if (!sref.type.has_value() || !tref.type.has_value()) {
+                    throw GraphError(
+                        "fromIson: Invalid node reference: edge endpoint has no type");
                 }
+                graph.addEdge(block.name, NodeRef(sref.type.value(), sref.id),
+                              NodeRef(tref.type.value(), tref.id), props);
             }
         }
 
         return graph;
     }
 
-    /** Parse graph from ISONL streaming format */
-    static ISONGraph fromIsonl(const std::string& text, const std::string& graphName = "graph") {
-        ISONGraph graph(graphName);
-
-        std::istringstream iss(text);
-        std::string line;
-
-        while (std::getline(iss, line)) {
-            line = trim(line);
-            if (line.empty()) continue;
-
-            // Split by pipe (quote-aware): kind.type|fields|values
-            std::vector<std::string> parts = splitPipeAware(line);
-            if (parts.size() != 3) {
-                throw GraphError("fromIsonl: malformed line (expected 'kind.type|fields|values'): " + line);
-            }
-
-            // Parse header
-            size_t dotPos = parts[0].find('.');
-            if (dotPos == std::string::npos) {
-                throw GraphError("fromIsonl: malformed header (expected 'nodes.<type>' or 'edges.<type>'): " + parts[0]);
-            }
-
-            std::string kind = parts[0].substr(0, dotPos);
-            std::string typeName = parts[0].substr(dotPos + 1);
-
-            std::vector<std::string> fields = splitFields(parts[1]);
-            std::vector<std::string> values = splitFields(parts[2]);
-
-            if (fields.size() != values.size()) {
-                throw GraphError("fromIsonl: line for '" + parts[0] + "' has "
-                    + std::to_string(values.size()) + " values but declares "
-                    + std::to_string(fields.size()) + " fields: " + line);
-            }
-
-            // Build properties map
-            std::map<std::string, std::string> props;
-            for (size_t i = 0; i < fields.size(); ++i) {
-                props[fields[i]] = values[i];
-            }
-
-            if (kind == "nodes") {
-                auto idIt = props.find("id");
-                if (idIt == props.end()) {
-                    throw GraphError("fromIsonl: line for 'nodes." + typeName
-                        + "' is missing the required 'id' field: " + line);
-                }
-                std::string nodeId = idIt->second;
-                Properties nodeProps;
-                for (const auto& [k, v] : props) {
-                    if (k != "id") {
-                        nodeProps[k] = v;
-                    }
-                }
-                try {
-                    graph.addNode(typeName, nodeId, nodeProps);
-                } catch (const DuplicateNodeError&) {
-                    throw GraphError("fromIsonl: duplicate node line ':" + typeName + ":" + nodeId + "'");
-                }
-            } else if (kind == "edges") {
-                auto srcIt = props.find("source");
-                auto tgtIt = props.find("target");
-                if (srcIt == props.end() || tgtIt == props.end()) {
-                    throw GraphError("fromIsonl: line for 'edges." + typeName
-                        + "' is missing the required 'source' and/or 'target' field: " + line);
-                }
-                NodeRef source = parseNodeRef(srcIt->second);
-                NodeRef target = parseNodeRef(tgtIt->second);
-                Properties edgeProps;
-                for (const auto& [k, v] : props) {
-                    if (k != "source" && k != "target") {
-                        edgeProps[k] = v;
-                    }
-                }
-                try {
-                    graph.addEdge(typeName, source, target, edgeProps);
-                } catch (const NodeNotFoundError& e) {
-                    throw GraphError("fromIsonl: edge line for 'edges." + typeName
-                        + "' references a node that has not been defined (" + e.what()
-                        + "); node lines must appear before the edges that use them");
-                } catch (const DuplicateEdgeError&) {
-                    throw GraphError("fromIsonl: duplicate edge line '" + srcIt->second + " -> "
-                        + tgtIt->second + "' for 'edges." + typeName + "'");
-                }
-            }
-        }
-
-        return graph;
+    /** Parse a graph from ISON. */
+    static ISONGraph fromIson(const std::string& text,
+                              const std::string& graphName = "graph") {
+        return buildFromDocument(ison::loads(text), graphName);
     }
+
+    /** Parse a graph from ISONL. */
+    static ISONGraph fromIsonl(const std::string& text,
+                               const std::string& graphName = "graph") {
+        return buildFromDocument(ison::loads_isonl(text), graphName);
+    }
+
 
     // =========================================================================
     // File I/O

@@ -11,8 +11,32 @@ target_include_directories(ison_graph INTERFACE
     $<INSTALL_INTERFACE:include>
 )
 
+# ISON syntax lives in ison-cpp. Including its header rather than vendoring a
+# copy means a parser fix reaches ISONGraph on the next build instead of when
+# someone remembers to re-cut the copy. Point ISON_CPP_INCLUDE_DIR at an
+# ison-cpp checkout; the sibling layout is the default.
+set(ISON_CPP_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../ison/ison-cpp/include"
+    CACHE PATH "Directory containing ison_parser.hpp")
+if(NOT EXISTS "${ISON_CPP_INCLUDE_DIR}/ison_parser.hpp")
+    message(FATAL_ERROR
+        "ison_parser.hpp not found in ${ISON_CPP_INCLUDE_DIR}. "
+        "Set -DISON_CPP_INCLUDE_DIR=<path to ison-cpp/include>.")
+endif()
+target_include_directories(ison_graph INTERFACE
+    $<BUILD_INTERFACE:${ISON_CPP_INCLUDE_DIR}>
+)
+
 # Tests
 enable_testing()
+
+# The suites assert with assert(), which Release compiles out via NDEBUG - so
+# `ctest -C Release` reported every case as PASSED while checking nothing. A
+# golden-fixture test went green against a stale expectation that way. Keep
+# assertions live in the test targets regardless of build type.
+add_compile_options($<$<CONFIG:Release>:-UNDEBUG>)
+if(MSVC)
+    add_compile_options($<$<CONFIG:Release>:/UNDEBUG>)
+endif()
 
 # ISONGraph core tests
 add_executable(test_ison_graph tests/test_ison_graph.cpp)

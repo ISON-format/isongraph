@@ -288,12 +288,28 @@ TEST(edge_rel_type_with_colon_or_pipe_rejected) {
     assert(graph.edgeCount() == 0);
 }
 
-TEST(valid_identifiers_with_spaces_still_allowed) {
-    ISONGraph graph("test");
-    graph.addNode("a type", "an id-1");
-    graph.addNode("b", "2");
-    Edge edge = graph.addEdge("shares border with", {"a type", "an id-1"}, {"b", "2"});
-    assert(edge.relType == "shares border with");
+TEST(unrepresentable_identifiers_are_rejected) {
+    // Whitespace and empty used to be accepted and then blow up on round
+    // trip: ':a b:1' splits mid-reference, and an id column holding 'a b'
+    // reparses as two values. Rejected at construction instead.
+    const char* bad[] = {"a b", "a\tb", "a\nb", ""};
+    for (int i = 0; i < 4; ++i) {
+        ISONGraph g1;
+        bool threw = false;
+        try { g1.addNode(bad[i], "1"); } catch (const std::invalid_argument&) { threw = true; }
+        assert(threw);
+        ISONGraph g2;
+        threw = false;
+        try { g2.addNode("p", bad[i]); } catch (const std::invalid_argument&) { threw = true; }
+        assert(threw);
+    }
+
+    // ISONL cannot quote a block name, so types are stricter than ids.
+    ISONGraph g3;
+    bool threw = false;
+    try { g3.addNode("a\"b", "1"); } catch (const std::invalid_argument&) { threw = true; }
+    assert(threw);
+    g3.addNode("p", "a\"b");  // fine as an id: a value, not a name
 }
 
 // =============================================================================
@@ -810,45 +826,45 @@ TEST(collect_nodes) {
 // =============================================================================
 
 static const std::string CANONICAL_GOLDEN_ISON =
+    "edges.KNOWS\n"
+    "since source target\n"
+    "\"2020\" :person:1 :person:2\n"
+    "\"2021\" :person:10 :person:1\n"
+    "\n"
+    "edges.WORKS_AT\n"
+    "role source target\n"
+    "\"Lead Engineer\" :person:1 :company:acme\n"
+    "\n"
+    "edges.WORKS_ON\n"
+    "hours source target\n"
+    "\"3\" :person:10 :project:p1\n"
+    "\"5\" :person:2 :project:p1\n"
+    "\n"
     "nodes.company\n"
     "id name\n"
     "acme \"Acme Corp\"\n"
     "\n"
     "nodes.person\n"
     "id age name\n"
-    "1 30 Alice\n"
-    "10 22 Jax\n"
-    "2 25 Bob\n"
+    "\"1\" \"30\" Alice\n"
+    "\"10\" \"22\" Jax\n"
+    "\"2\" \"25\" Bob\n"
     "\n"
     "nodes.project\n"
     "id name tag\n"
-    "p1 Alpha \"a|b\"\n"
-    "\n"
-    "edges.KNOWS\n"
-    "source target since\n"
-    ":person:1 :person:2 2020\n"
-    ":person:10 :person:1 2021\n"
-    "\n"
-    "edges.WORKS_AT\n"
-    "source target role\n"
-    ":person:1 :company:acme \"Lead Engineer\"\n"
-    "\n"
-    "edges.WORKS_ON\n"
-    "source target hours\n"
-    ":person:10 :project:p1 3\n"
-    ":person:2 :project:p1 5";
+    "p1 Alpha a|b";
 
 static const std::string CANONICAL_GOLDEN_ISONL =
+    "edges.KNOWS|since source target|\"2020\" :person:1 :person:2\n"
+    "edges.KNOWS|since source target|\"2021\" :person:10 :person:1\n"
+    "edges.WORKS_AT|role source target|\"Lead Engineer\" :person:1 :company:acme\n"
+    "edges.WORKS_ON|hours source target|\"3\" :person:10 :project:p1\n"
+    "edges.WORKS_ON|hours source target|\"5\" :person:2 :project:p1\n"
     "nodes.company|id name|acme \"Acme Corp\"\n"
-    "nodes.person|id age name|1 30 Alice\n"
-    "nodes.person|id age name|10 22 Jax\n"
-    "nodes.person|id age name|2 25 Bob\n"
-    "nodes.project|id name tag|p1 Alpha \"a|b\"\n"
-    "edges.KNOWS|source target since|:person:1 :person:2 2020\n"
-    "edges.KNOWS|source target since|:person:10 :person:1 2021\n"
-    "edges.WORKS_AT|source target role|:person:1 :company:acme \"Lead Engineer\"\n"
-    "edges.WORKS_ON|source target hours|:person:10 :project:p1 3\n"
-    "edges.WORKS_ON|source target hours|:person:2 :project:p1 5";
+    "nodes.person|id age name|\"1\" \"30\" Alice\n"
+    "nodes.person|id age name|\"10\" \"22\" Jax\n"
+    "nodes.person|id age name|\"2\" \"25\" Bob\n"
+    "nodes.project|id name tag|p1 Alpha \"a\\|b\"";
 
 static ISONGraph buildCanonicalFixture(int order) {
     ISONGraph g("fixture");
@@ -904,7 +920,14 @@ TEST(ordinal_not_numeric_sort) {
     std::vector<std::string> ids;
     std::getline(iss, line); // skip "id age name" header
     while (std::getline(iss, line)) {
-        ids.push_back(line.substr(0, line.find(' ')));
+        // Ids are quoted because the fixture uses string ids - the canonical
+        // writer quotes a string that would otherwise reparse as a number, so
+        // the round trip stays lossless. Strip that to read the order.
+        std::string id = line.substr(0, line.find(' '));
+        if (id.size() >= 2 && id.front() == '"' && id.back() == '"') {
+            id = id.substr(1, id.size() - 2);
+        }
+        ids.push_back(id);
     }
     assert(ids.size() == 3);
     assert(ids[0] == "1");
@@ -949,7 +972,7 @@ int main() {
     RUN_TEST(node_type_id_with_colon_rejected);
     RUN_TEST(node_type_id_with_pipe_rejected);
     RUN_TEST(edge_rel_type_with_colon_or_pipe_rejected);
-    RUN_TEST(valid_identifiers_with_spaces_still_allowed);
+    RUN_TEST(unrepresentable_identifiers_are_rejected);
 
     // Traversal tests
     RUN_TEST(neighbors);
