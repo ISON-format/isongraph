@@ -21,7 +21,11 @@
  * @version 1.0.0
  */
 
-import { loads as parse, Reference, loadsISONL as loadsIsonl } from 'ison-parser';
+import {
+  loads as parse, loadsISONL as loadsIsonl,
+  Block, Document, Reference,
+  dumpsCanonical, dumpsCanonicalISONL,
+} from 'ison-parser';
 
 export const VERSION = "1.0.0";
 
@@ -178,10 +182,34 @@ export class DuplicateEdgeError extends GraphError {
  */
 export class InvalidIdentifierError extends GraphError {
   constructor(kind, value) {
-    super(`${kind} must not contain ':' or '|': ${JSON.stringify(value)}`);
+    super(
+      `${kind} ${JSON.stringify(value)} is not representable: it must not be ` +
+      `empty or contain whitespace, ':' or '|'` +
+      (/type/i.test(kind) ? `, '"' or '\\'` : '')
+    );
     this.name = "InvalidIdentifierError";
     this.kind = kind;
     this.value = value;
+  }
+}
+
+/**
+ * A property name has no unambiguous ISON encoding. Property names become
+ * ISON field names, and the format quotes values but not names: a space
+ * splits the field in two, ':' has the remainder eaten as a type
+ * annotation, '.' is a dot path, and a leading '#' turns the header into a
+ * comment and loses the whole block.
+ */
+export class InvalidPropertyNameError extends GraphError {
+  constructor(kind, name) {
+    super(
+      `${kind} name ${JSON.stringify(name)} cannot be encoded: property ` +
+      `names must not be empty, start with '#', or contain whitespace, ` +
+      `':', '|', '"', '\\' or '.'`
+    );
+    this.name = "InvalidPropertyNameError";
+    this.kind = kind;
+    this.propertyName = name;
   }
 }
 
@@ -236,8 +264,23 @@ export class ISONGraph {
    */
   static _checkIdentifier(kind, value) {
     const s = String(value);
-    if (s.includes(':') || s.includes('|')) {
+    // Types become block names, which ISONL additionally cannot quote;
+    // ids only have to survive a reference, which has no quoting at all.
+    const forbidden = /type/i.test(kind)
+      ? /[\s:|"\\]/
+      : /[\s:|]/;
+    if (s === '' || forbidden.test(s)) {
       throw new InvalidIdentifierError(kind, s);
+    }
+  }
+
+  /** Reject property names that cannot survive a serialization round trip. */
+  static _checkPropertyNames(kind, properties) {
+    const forbidden = /[\s:|"\\\.]/;
+    for (const name of Object.keys(properties || {})) {
+      if (name === '' || name.startsWith('#') || forbidden.test(name)) {
+        throw new InvalidPropertyNameError(kind, name);
+      }
     }
   }
 
@@ -248,6 +291,7 @@ export class ISONGraph {
   addNode(nodeType, nodeId, properties = {}) {
     ISONGraph._checkIdentifier('Node type', nodeType);
     ISONGraph._checkIdentifier('Node id', nodeId);
+    ISONGraph._checkPropertyNames('Node property', properties);
 
     if (!this._nodes.has(nodeType)) {
       this._nodes.set(nodeType, new Map());
@@ -255,6 +299,19 @@ export class ISONGraph {
 
     const typeNodes = this._nodes.get(nodeType);
     if (typeNodes.has(nodeId)) {
+      throw new DuplicateNodeError([nodeType, nodeId]);
+    }
+
+    // An id column distinguishes 1 from "1" by quoting, a reference cannot:
+    // both write as ':p:1'. Two nodes differing only by id type are
+    // indistinguishable on the wire, so refuse the second.
+    let twin = nodeId;
+    if (typeof nodeId === 'string' && /^-?\d+$/.test(nodeId)) {
+      twin = parseInt(nodeId, 10);
+    } else if (typeof nodeId === 'number' && Number.isInteger(nodeId)) {
+      twin = String(nodeId);
+    }
+    if (twin !== nodeId && typeNodes.has(twin)) {
       throw new DuplicateNodeError([nodeType, nodeId]);
     }
 
@@ -345,6 +402,7 @@ export class ISONGraph {
 
   addEdge(relType, source, target, properties = {}) {
     ISONGraph._checkIdentifier('Relationship type', relType);
+    ISONGraph._checkPropertyNames('Edge property', properties);
 
     if (!this.hasNode(source[0], source[1])) {
       throw new NodeNotFoundError(source);
@@ -943,203 +1001,140 @@ export class ISONGraph {
   // Serialization (ISON/ISONL)
   // =========================================================================
 
-  _valueToIson(value) {
-    if (value === null || value === undefined) {
-      return "null";
-    }
-    if (typeof value === "boolean") {
-      return value ? "true" : "false";
-    }
-    if (typeof value === "string") {
-      // Standardized ISON quoting rule: double-quote when the value contains
-      // a space, '|', '"', a newline, or is empty; escape '"' as \" and
-      // newline as \n so fromIson/fromIsonl can reverse it losslessly.
-      if (
-        value === "" ||
-        value.includes(" ") ||
-        value.includes("|") ||
-        value.includes('"') ||
-        value.includes("\n")
-      ) {
-        const escaped = value.replace(/"/g, '\\"').replace(/\n/g, '\\n');
-        return `"${escaped}"`;
-      }
-      return value;
-    }
-    return String(value);
-  }
-
-  /** Sorted node rows within a type block: ordinal comparison of String(id). */
-  static _sortedNodes(typeNodes) {
-    return Array.from(typeNodes.values()).sort((a, b) => {
-      const ka = String(a.id), kb = String(b.id);
-      return ka < kb ? -1 : ka > kb ? 1 : 0;
-    });
-  }
-
-  /** Sorted edge rows within a rel_type block: ordinal (sourceType, sourceId, targetType, targetId). */
-  static _sortedEdges(edges) {
-    return [...edges].sort((a, b) => {
-      const ka = [a.source[0], String(a.source[1]), a.target[0], String(a.target[1])];
-      const kb = [b.source[0], String(b.source[1]), b.target[0], String(b.target[1])];
-      for (let i = 0; i < 4; i++) {
-        if (ka[i] < kb[i]) return -1;
-        if (ka[i] > kb[i]) return 1;
-      }
-      return 0;
-    });
-  }
-
   /**
-   * Serialize graph to ISON format.
+   * Build the ISON Document this graph serializes to.
    *
-   * Serialization is canonical: node type blocks, node rows within a block,
-   * edge type blocks, and edge rows within a block are all sorted (ordinal
-   * string comparison), independent of insertion order. The same logical
-   * graph always serializes to the same bytes, regardless of construction
-   * history.
+   * ISONGraph decides *what* to emit - which blocks, which rows, which
+   * columns - and hands every byte-level decision to ison-parser's
+   * canonical writer: quoting, escaping, delimiters, column layout, and
+   * the final block and row order.
+   *
+   * This used to be hand-rolled here, which meant ISON syntax had two
+   * implementations per language that had to agree forever. They did not:
+   * the id column was written unquoted, so a node id containing a space
+   * produced output that would not reparse, and a string id like "1" came
+   * back as the number 1.
    */
-  toIson() {
+  _document() {
     const blocks = [];
 
-    const nodeTypes = Array.from(this._nodes.keys()).sort();
-    for (const nodeType of nodeTypes) {
+    for (const nodeType of Array.from(this._nodes.keys()).sort()) {
       const typeNodes = this._nodes.get(nodeType);
       if (typeNodes.size === 0) continue;
-      const sortedTypeNodes = ISONGraph._sortedNodes(typeNodes);
 
       const propKeys = new Set();
-      for (const node of sortedTypeNodes) {
-        for (const key of Object.keys(node.properties)) {
-          propKeys.add(key);
-        }
+      for (const node of typeNodes.values()) {
+        for (const key of Object.keys(node.properties)) propKeys.add(key);
       }
       const sortedPropKeys = Array.from(propKeys).sort();
 
-      const lines = [`nodes.${nodeType}`];
-      lines.push(["id", ...sortedPropKeys].join(" "));
-
-      for (const node of sortedTypeNodes) {
-        const values = [String(node.id)];
+      const rows = [];
+      for (const node of typeNodes.values()) {
+        const row = { id: node.id };
         for (const key of sortedPropKeys) {
-          values.push(this._valueToIson(node.properties[key]));
+          row[key] = node.properties[key] === undefined ? null : node.properties[key];
         }
-        lines.push(values.join(" "));
+        rows.push(row);
       }
-
-      blocks.push(lines.join("\n"));
+      blocks.push(new Block("nodes", nodeType, ["id", ...sortedPropKeys], rows));
     }
 
-    const edgeTypes = Array.from(this._edges.keys()).sort();
-    for (const relType of edgeTypes) {
+    for (const relType of Array.from(this._edges.keys()).sort()) {
       const edges = this._edges.get(relType);
       if (edges.length === 0) continue;
-      const sortedTypeEdges = ISONGraph._sortedEdges(edges);
 
       const propKeys = new Set();
-      for (const edge of sortedTypeEdges) {
-        for (const key of Object.keys(edge.properties)) {
-          propKeys.add(key);
-        }
+      for (const edge of edges) {
+        for (const key of Object.keys(edge.properties)) propKeys.add(key);
       }
       const sortedPropKeys = Array.from(propKeys).sort();
 
-      const lines = [`edges.${relType}`];
-      lines.push(["source", "target", ...sortedPropKeys].join(" "));
-
-      for (const edge of sortedTypeEdges) {
-        const sourceRef = `:${edge.source[0]}:${edge.source[1]}`;
-        const targetRef = `:${edge.target[0]}:${edge.target[1]}`;
-        const values = [sourceRef, targetRef];
+      const rows = [];
+      for (const edge of edges) {
+        const row = {
+          source: new Reference(String(edge.source[1]), edge.source[0]),
+          target: new Reference(String(edge.target[1]), edge.target[0]),
+        };
         for (const key of sortedPropKeys) {
-          values.push(this._valueToIson(edge.properties[key]));
+          row[key] = edge.properties[key] === undefined ? null : edge.properties[key];
         }
-        lines.push(values.join(" "));
+        rows.push(row);
       }
-
-      blocks.push(lines.join("\n"));
+      blocks.push(new Block("edges", relType, ["source", "target", ...sortedPropKeys], rows));
     }
 
-    return blocks.join("\n\n");
+    return new Document(blocks);
   }
 
   /**
-   * Serialize graph to ISONL streaming format.
+   * Serialize graph to canonical ISON (ISONCS).
    *
-   * Row order is canonical, matching {@link ISONGraph#toIson} - see there
-   * for the exact ordering rule.
+   * Output is canonical: the same logical graph always serializes to the
+   * same bytes regardless of construction order. Block, row and column
+   * order are the canonical writer's, not ISONGraph's.
+   */
+  toIson() {
+    return dumpsCanonical(this._document());
+  }
+
+  /**
+   * Serialize graph to canonical ISONL. Row order matches {@link
+   * ISONGraph#toIson}.
    */
   toIsonl() {
-    const lines = [];
+    return dumpsCanonicalISONL(this._document());
+  }
 
-    const nodeTypes = Array.from(this._nodes.keys()).sort();
-    for (const nodeType of nodeTypes) {
-      const typeNodes = this._nodes.get(nodeType);
-      for (const node of ISONGraph._sortedNodes(typeNodes)) {
-        const propKeys = Object.keys(node.properties).sort();
-        const fields = ["id", ...propKeys];
-        const values = [String(node.id), ...propKeys.map(k => this._valueToIson(node.properties[k]))];
-        lines.push(`nodes.${node.type}|${fields.join(" ")}|${values.join(" ")}`);
-      }
+  /**
+   * Turn an ISON reference into the NodeRef the graph actually holds.
+   *
+   * ':person:1' carries no type information, so the id could be the string
+   * "1" or the number 1 and the reference looks identical either way.
+   * Guessing from the text alone silently breaks graphs with numeric-looking
+   * string ids, so resolve against the loaded nodes first.
+   */
+  static _resolveRef(graph, ref) {
+    if (graph.hasNode(ref.type, ref.id)) return [ref.type, ref.id];
+    if (/^-?\d+$/.test(ref.id)) {
+      const n = parseInt(ref.id, 10);
+      if (graph.hasNode(ref.type, n)) return [ref.type, n];
+      return [ref.type, n];
     }
-
-    const edgeTypes = Array.from(this._edges.keys()).sort();
-    for (const relType of edgeTypes) {
-      const edges = this._edges.get(relType);
-      for (const edge of ISONGraph._sortedEdges(edges)) {
-        const propKeys = Object.keys(edge.properties).sort();
-        const fields = ["source", "target", ...propKeys];
-        const sourceRef = `:${edge.source[0]}:${edge.source[1]}`;
-        const targetRef = `:${edge.target[0]}:${edge.target[1]}`;
-        const values = [sourceRef, targetRef, ...propKeys.map(k => this._valueToIson(edge.properties[k]))];
-        lines.push(`edges.${relType}|${fields.join(" ")}|${values.join(" ")}`);
-      }
-    }
-
-    return lines.join("\n");
+    return [ref.type, ref.id];
   }
 
   static fromIson(text, name = "graph") {
     const graph = new ISONGraph(name);
     const doc = parse(text);
 
+    // Nodes first regardless of block order - the canonical writer sorts
+    // blocks by name, which puts 'edges' ahead of 'nodes'.
     for (const block of doc.blocks) {
-      if (block.kind === "nodes") {
-        const nodeType = block.name;
-        for (const row of block.rows) {
-          const nodeId = row.id;
-          const props = {};
-          for (const [k, v] of Object.entries(row)) {
-            if (k !== "id") {
-              props[k] = v instanceof Reference ? [v.type, v.id] : v;
-            }
-          }
-          graph.addNode(nodeType, nodeId, props);
+      if (block.kind !== "nodes") continue;
+      for (const row of block.rows) {
+        const props = {};
+        for (const [k, v] of Object.entries(row)) {
+          if (k !== "id") props[k] = v instanceof Reference ? [v.type, v.id] : v;
         }
-      } else if (block.kind === "edges") {
-        const relType = block.name;
-        for (const row of block.rows) {
-          let source = row.source;
-          let target = row.target;
+        graph.addNode(block.name, row.id, props);
+      }
+    }
 
-          // Convert Reference objects to tuples
-          if (source instanceof Reference) {
-            const id = /^\d+$/.test(source.id) ? parseInt(source.id, 10) : source.id;
-            source = [source.type, id];
-          }
-          if (target instanceof Reference) {
-            const id = /^\d+$/.test(target.id) ? parseInt(target.id, 10) : target.id;
-            target = [target.type, id];
-          }
+    for (const block of doc.blocks) {
+      if (block.kind !== "edges") continue;
+      for (const row of block.rows) {
+        let source = row.source;
+        let target = row.target;
+        if (source instanceof Reference) source = ISONGraph._resolveRef(graph, source);
+        if (target instanceof Reference) target = ISONGraph._resolveRef(graph, target);
 
-          const props = {};
-          for (const [k, v] of Object.entries(row)) {
-            if (k !== "source" && k !== "target") {
-              props[k] = v instanceof Reference ? [v.type, v.id] : v;
-            }
+        const props = {};
+        for (const [k, v] of Object.entries(row)) {
+          if (k !== "source" && k !== "target") {
+            props[k] = v instanceof Reference ? [v.type, v.id] : v;
           }
-          graph.addEdge(relType, source, target, props);
         }
+        graph.addEdge(block.name, source, target, props);
       }
     }
 
@@ -1150,42 +1145,34 @@ export class ISONGraph {
     const graph = new ISONGraph(name);
     const doc = loadsIsonl(text);
 
+    // Nodes first regardless of block order - the canonical writer sorts
+    // blocks by name, which puts 'edges' ahead of 'nodes'.
     for (const block of doc.blocks) {
-      if (block.kind === "nodes") {
-        const nodeType = block.name;
-        for (const row of block.rows) {
-          const nodeId = row.id;
-          const props = {};
-          for (const [k, v] of Object.entries(row)) {
-            if (k !== "id") {
-              props[k] = v instanceof Reference ? [v.type, v.id] : v;
-            }
-          }
-          graph.addNode(nodeType, nodeId, props);
+      if (block.kind !== "nodes") continue;
+      for (const row of block.rows) {
+        const props = {};
+        for (const [k, v] of Object.entries(row)) {
+          if (k !== "id") props[k] = v instanceof Reference ? [v.type, v.id] : v;
         }
-      } else if (block.kind === "edges") {
-        const relType = block.name;
-        for (const row of block.rows) {
-          let source = row.source;
-          let target = row.target;
+        graph.addNode(block.name, row.id, props);
+      }
+    }
 
-          if (source instanceof Reference) {
-            const id = /^\d+$/.test(source.id) ? parseInt(source.id, 10) : source.id;
-            source = [source.type, id];
-          }
-          if (target instanceof Reference) {
-            const id = /^\d+$/.test(target.id) ? parseInt(target.id, 10) : target.id;
-            target = [target.type, id];
-          }
+    for (const block of doc.blocks) {
+      if (block.kind !== "edges") continue;
+      for (const row of block.rows) {
+        let source = row.source;
+        let target = row.target;
+        if (source instanceof Reference) source = ISONGraph._resolveRef(graph, source);
+        if (target instanceof Reference) target = ISONGraph._resolveRef(graph, target);
 
-          const props = {};
-          for (const [k, v] of Object.entries(row)) {
-            if (k !== "source" && k !== "target") {
-              props[k] = v instanceof Reference ? [v.type, v.id] : v;
-            }
+        const props = {};
+        for (const [k, v] of Object.entries(row)) {
+          if (k !== "source" && k !== "target") {
+            props[k] = v instanceof Reference ? [v.type, v.id] : v;
           }
-          graph.addEdge(relType, source, target, props);
         }
+        graph.addEdge(block.name, source, target, props);
       }
     }
 
