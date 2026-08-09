@@ -31,6 +31,22 @@
 // build instead of when someone remembers to re-cut the copy.
 #include "ison_parser.hpp"
 
+// Require a parser new enough to have what this port depends on: canonical
+// serialization that sorts on the full field tuple, and the name rules that
+// reject what cannot be read back. A stale ison_parser.hpp would otherwise
+// compile fine and quietly emit different bytes.
+//
+// Checked with the preprocessor rather than static_assert because that also
+// catches a header old enough to predate the macros - static_assert cannot
+// fire on a symbol that does not exist, and ison::VERSION is a const char*
+// that no compile-time comparison can reach.
+#ifndef ISON_VERSION_MAJOR
+#  error "ison_parser.hpp is too old: it predates ISON_VERSION_MAJOR (need >= 1.1.0). Point ISON_CPP_INCLUDE_DIR at an ison-cpp >= 1.1.0."
+#endif
+#if (ISON_VERSION_MAJOR * 10000 + ISON_VERSION_MINOR * 100 + ISON_VERSION_PATCH) < 10100
+#  error "ison_parser.hpp is older than 1.1.0; ISONGraph needs its canonical writer and name validation."
+#endif
+
 #include <memory>
 #include <set>
 #include <algorithm>
