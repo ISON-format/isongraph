@@ -39,14 +39,14 @@ When working with LLMs, every token counts. Traditional graph formats like JSON,
 ISONGraph uses a compact tabular format that LLMs understand naturally:
 
 ```
-nodes.person
-id name age
-1 Alice 30
-2 Bob 25
-
 edges.KNOWS
-source target since
-:person:1 :person:2 2020
+since source target
+2020 :person:1 :person:2
+
+nodes.person
+id age name
+1 30 Alice
+2 25 Bob
 ```
 **ISONGraph represents the same full dataset in 177 tokens: 70% smaller than formatted JSON, ~41% smaller than minified JSON. Both baselines are reported in the benchmark.**
 
@@ -147,7 +147,7 @@ npm install ison-graph-ts
 
 ```toml
 [dependencies]
-ison-graph = "1.0.0"
+ison-graph = "1.3.0"
 ```
 
 ### C++
@@ -211,6 +211,15 @@ print(graph.to_ison())
 
 **Output** (node types and fields are emitted in sorted order):
 ```
+edges.KNOWS
+since source target
+2020 :person:1 :person:2
+2021 :person:2 :person:3
+
+edges.WORKS_AT
+role source target
+Engineer :person:1 :company:100
+
 nodes.company
 id employees name
 100 500 TechCorp
@@ -220,15 +229,6 @@ id age name
 1 30 Alice
 2 25 Bob
 3 28 Carol
-
-edges.KNOWS
-source target since
-:person:1 :person:2 2020
-:person:2 :person:3 2021
-
-edges.WORKS_AT
-source target role
-:person:1 :company:100 Engineer
 ```
 
 ### Schema Validation

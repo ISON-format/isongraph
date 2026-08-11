@@ -114,30 +114,35 @@ graph.save('social.isong')
 ISONGraph serializes to a compact, human-readable format:
 
 ```
-nodes.person
-id name age
-1 Alice 30
-2 Bob 25
-3 Charlie 35
-
-nodes.company
-id name industry
-100 Acme tech
-
 edges.KNOWS
-source target since
-:person:1 :person:2 2020
-:person:2 :person:3 2021
+since source target
+2020 :person:1 :person:2
+2021 :person:2 :person:3
 
 edges.WORKS_AT
-source target role
-:person:1 :company:100 Engineer
+role source target
+Engineer :person:1 :company:100
+
+nodes.company
+id industry name
+100 tech Acme
+
+nodes.person
+id age name
+1 30 Alice
+2 25 Bob
+3 35 Charlie
 ```
 
 **Key syntax:**
 - `nodes.{type}` - Node block header
 - `edges.{REL_TYPE}` - Edge block header
 - `:type:id` - Node reference (used in edges)
+
+**Block and column order is the canonical writer's, not the caller's:** blocks
+sort by `kind.name` (so `edges` precedes `nodes`) and columns sort within a
+block. The same logical graph always produces the same bytes whatever order it
+was built in, which is what makes the output safe for content addressing.
 - Whitespace-separated values
 
 ## Core Concepts
@@ -1017,24 +1022,44 @@ class SafeMultiGraph(ProtectedGraph, MultiGraph):
 g = SafeMultiGraph()
 ```
 
-Overhead versus core `ISONGraph` on 2,000 nodes / 10,000 edges: build ~1.5×
-(MultiGraph), ~1.6× (ProtectedGraph), ~2× combined. `to_ison()` is ~3.5× on
-MultiGraph, the cost of routing emission through the canonical writer.
-Traversal is unaffected.
+Overhead versus core `ISONGraph` on 2,000 nodes / 10,000 edges: build ~1.3×
+(MultiGraph), ~1.5× (ProtectedGraph), ~2× combined; `to_ison()` ~1.15×.
+Serialization used to be ~3.5× here, when core still hand-rolled its emitter
+and only the extensions paid for the canonical writer - both go through it
+now, so the gap is the extensions' own bookkeeping. Traversal is
+unaffected.
 
 ### Identifier constraints
 
-Node types, node ids and relation types may not contain `:` or `|`:
+Node types, node ids and relation types must be representable in ISON. They
+may not be empty, and may not contain whitespace, `:` or `|`; types
+additionally may not contain `"` or `\`, because they become block names and
+ISONL cannot quote those:
 
 ```python
 graph.add_node('person', 'user:1')          # InvalidIdentifierError
+graph.add_node('person', 'has space')       # InvalidIdentifierError
 graph.add_edge('knows:strong', src, dst)    # InvalidIdentifierError
+graph.add_node('a"type', '1')               # InvalidIdentifierError (type only)
 ```
 
-Both characters are structurally significant to the wire format — `:` delimits
-`:type:id` references and `|` delimits ISONL columns — so this is deliberate
-format policy shared by every ISONGraph port, not a Python-side check. It
-applies to `MultiGraph` and `ProtectedGraph` equally.
+Every one of these previously built a graph that corrupted or threw on
+round-trip rather than failing here: `:type:id` references have no quoting
+syntax at all, so an id containing a space splits mid-reference. Hyphens,
+dots, `#` and unicode are fine.
+
+Property names are checked too, against a slightly wider set — they become
+ISON *field* names, and a leading `#` turns the header into a comment,
+losing the whole block:
+
+```python
+graph.add_node('person', 1, **{'first name': 'Alice'})  # InvalidPropertyNameError
+graph.add_node('person', 1, **{'a.b': 'x'})             # InvalidPropertyNameError
+```
+
+This is deliberate format policy shared by every ISONGraph port, not a
+Python-side check, and it applies to `MultiGraph` and `ProtectedGraph`
+equally.
 
 If your source data uses such values, project them at your boundary rather than
 expecting the graph to accept them: keep the original values as your source of

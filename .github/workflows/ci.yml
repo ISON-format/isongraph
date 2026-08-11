@@ -50,15 +50,20 @@ jobs:
 
   cpp:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ison-graph-cpp
     steps:
       - uses: actions/checkout@v4
+      # ison_graph.hpp includes ison_parser.hpp rather than vendoring a copy,
+      # so the parser headers have to be on the include path here too.
+      - name: Check out ison-cpp
+        uses: actions/checkout@v4
+        with:
+          repository: ISON-format/ison
+          path: _ison
       - name: Build and run tests
+        working-directory: ison-graph-cpp
         run: |
           for t in test_ison_graph test_isonql test_isongraphantic; do
-            g++ -std=c++17 -Wall -I include "tests/$t.cpp" -o "$t"
+            g++ -std=c++17 -Wall -I include -I ../_ison/ison-cpp/include               "tests/$t.cpp" -o "$t"
             "./$t"
           done
 

@@ -865,14 +865,14 @@ if (result.valid) {
 ISONGraph uses a token-efficient serialization format:
 
 ```
-nodes.person
-id name age
-1 Alice 30
-2 Bob 25
-
 edges.KNOWS
-source target since
-:person:1 :person:2 2020
+since source target
+2020 :person:1 :person:2
+
+nodes.person
+id age name
+1 30 Alice
+2 25 Bob
 ```
 
 ### ISONL (Line-Oriented Format)
@@ -880,10 +880,14 @@ source target since
 For streaming/appending:
 
 ```
-nodes.person|id name|1 Alice
-nodes.person|id name age|2 Bob 25
-edges.KNOWS|source target since|:person:1 :person:2 2020
+edges.KNOWS|since source target|2020 :person:1 :person:2
+nodes.person|id age name|1 null Alice
+nodes.person|id age name|2 25 Bob
 ```
+
+Rows in a block share the block's full field set, padded with `null` where a
+node lacks a property - the canonical writer decides the columns, so two rows
+of the same type always line up.
 
 ---
 

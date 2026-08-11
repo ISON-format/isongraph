@@ -586,14 +586,14 @@ try {
 ## ISON Format
 
 ```
-nodes.person
-id name age
-1 Alice 30
-2 Bob 25
-
 edges.KNOWS
-source target since
-:person:1 :person:2 2020
+since source target
+2020 :person:1 :person:2
+
+nodes.person
+id age name
+1 30 Alice
+2 25 Bob
 ```
 
 ## Complete Example

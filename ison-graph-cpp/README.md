@@ -12,7 +12,7 @@
 
 ## Features
 
-- **Header-Only**: Just include and use - no compilation needed
+- **Header-Only**: No compilation needed - include the headers (plus `ison_parser.hpp` from ison-cpp)
 - **Property Graph Model**: Nodes and edges with typed properties
 - **O(1) Lookups**: Fast node access by (type, id)
 - **Multi-Hop Traversal**: 1-hop, N-hop, and range queries
@@ -21,22 +21,44 @@
 - **Schema Validation**: Type-safe graph constraints
 - **Fluent API**: Chainable traversal queries
 - **ISON Persistence**: Token-efficient serialization
-- **Zero Dependencies**: Pure C++17 standard library
+- **One Dependency**: ison-cpp (header-only) for ISON syntax; otherwise the C++17 standard library
 
 ## Installation
 
-Copy the header files to your project, or use CMake:
+ISONGraph reads and writes ISON through [ison-cpp](https://github.com/ISON-format/ison),
+rather than carrying its own copy of the syntax. That means one ISON fix
+reaches ISONGraph on the next build instead of when someone remembers to
+re-cut a vendored copy - but it does mean `ison_parser.hpp` must be on your
+include path.
+
+**Requires ison-cpp >= 1.1.0.** An older header is a compile error, not a
+subtle behavioural difference:
+
+```
+error: ison_parser.hpp is older than 1.1.0; ISONGraph needs its canonical
+       writer and name validation.
+```
+
+With CMake, point `ISON_CPP_INCLUDE_DIR` at an ison-cpp checkout. It
+defaults to a sibling clone and fails configuration if the header is absent:
 
 ```bash
-mkdir build && cd build
-cmake ..
-cmake --build .
+cmake -S . -B build -DISON_CPP_INCLUDE_DIR=/path/to/ison-cpp/include
+cmake --build build
+ctest --test-dir build
+```
+
+Compiling directly, add both include directories:
+
+```bash
+g++ -std=c++17 -I include -I /path/to/ison-cpp/include tests/test_ison_graph.cpp
 ```
 
 **Required Headers:**
 - `include/ison_graph.hpp` - Core graph library
 - `include/isonql.hpp` - ISONQL query language
 - `include/isongraphantic.hpp` - Schema validation
+- `ison_parser.hpp` - ISON syntax, from ison-cpp
 
 ## Quick Start
 
@@ -837,14 +859,14 @@ try {
 ISONGraph uses a token-efficient serialization format:
 
 ```
-nodes.person
-id name age
-1 Alice 30
-2 Bob 25
-
 edges.KNOWS
-source target since
-:person:1 :person:2 2020
+since source target
+2020 :person:1 :person:2
+
+nodes.person
+id age name
+1 30 Alice
+2 25 Bob
 ```
 
 ### ISONL (Line-Oriented Format)
@@ -852,10 +874,14 @@ source target since
 For streaming/appending:
 
 ```
-nodes.person|id name|1 Alice
-nodes.person|id name age|2 Bob 25
-edges.KNOWS|source target since|:person:1 :person:2 2020
+edges.KNOWS|since source target|2020 :person:1 :person:2
+nodes.person|id age name|1 null Alice
+nodes.person|id age name|2 25 Bob
 ```
+
+Rows in a block share the block's full field set, padded with `null` where a
+node lacks a property - the canonical writer decides the columns, so two rows
+of the same type always line up.
 
 ---
 
@@ -863,7 +889,7 @@ edges.KNOWS|source target since|:person:1 :person:2 2020
 
 - C++17 compiler (GCC 7+, Clang 5+, MSVC 2017+)
 - CMake 3.14+ (optional)
-- Standard Library only (no external dependencies)
+- Standard Library, plus ison-cpp >= 1.1.0 for ISON syntax
 
 ## Building Tests
 
