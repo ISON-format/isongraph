@@ -12,8 +12,11 @@ Automatically generate ISONGraph schemas from JSON graph data.
 
 ## Installation
 
+Not on PyPI yet. Install from a checkout of the ISONGraph repo:
+
 ```bash
-pip install ison-schema-generator
+git clone https://github.com/ISON-format/isongraph.git
+pip install ./isongraph/schema-generator
 ```
 
 ## Usage

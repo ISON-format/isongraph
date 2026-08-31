@@ -18,10 +18,11 @@ Convert between ISONGraph and various popular graph formats.
 
 ## Installation
 
-The converters are part of the ISONGraph tools package:
+Not on PyPI yet. Install from a checkout of the ISONGraph repo:
 
 ```bash
-pip install ison-converters
+git clone https://github.com/ISON-format/isongraph.git
+pip install ./isongraph/converters
 ```
 
 ## Command Line Usage
