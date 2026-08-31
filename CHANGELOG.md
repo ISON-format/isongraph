@@ -6,7 +6,7 @@ share this file and, from 1.3.0, a single version number.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.3.0] — unreleased
+## [1.3.0] — 2026-08-31
 
 Serialized output changes in this release. A graph written by 1.3.0 is not
 byte-identical to one written by 1.2.0, and identifiers that 1.2.0 accepted
