@@ -58,6 +58,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ISON-format/ison
+          # Pinned to the floor ison_graph.hpp declares, so this builds against
+          # the version we promise rather than whatever main happens to be -
+          # and so an ison commit cannot break this repo with no commit here.
+          ref: v1.1.2
           path: _ison
       - name: Build and run tests
         working-directory: ison-graph-cpp
@@ -79,3 +83,15 @@ jobs:
           dotnet-version: "8.0.x"
       - run: dotnet build -warnaserror
       - run: dotnet test --no-build
+
+  goldens:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Each port's suite checks its code against its own golden. Nothing
+      # checks the ports against each other, so two ports can disagree with
+      # both suites green.
+      - run: python .github/scripts/check_cross_port_goldens.py
