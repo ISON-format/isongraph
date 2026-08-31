@@ -41,10 +41,10 @@
 // fire on a symbol that does not exist, and ison::VERSION is a const char*
 // that no compile-time comparison can reach.
 #ifndef ISON_VERSION_MAJOR
-#  error "ison_parser.hpp is too old: it predates ISON_VERSION_MAJOR (need >= 1.1.0). Point ISON_CPP_INCLUDE_DIR at an ison-cpp >= 1.1.0."
+#  error "ison_parser.hpp predates the ISON_VERSION_* macros. ISONGraph needs ison-cpp >= 1.1.2; 1.1.0 and 1.1.1 shipped without them."
 #endif
-#if (ISON_VERSION_MAJOR * 10000 + ISON_VERSION_MINOR * 100 + ISON_VERSION_PATCH) < 10100
-#  error "ison_parser.hpp is older than 1.1.0; ISONGraph needs its canonical writer and name validation."
+#if (ISON_VERSION_MAJOR * 10000 + ISON_VERSION_MINOR * 100 + ISON_VERSION_PATCH) < 10102
+#  error "ison_parser.hpp is older than 1.1.2; ISONGraph needs its canonical writer and name validation."
 #endif
 
 #include <memory>

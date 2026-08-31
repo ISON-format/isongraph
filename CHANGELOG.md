@@ -57,11 +57,11 @@ data silently; see **Migrating** below.
   Rust and C# at 1.0.0; C++ untagged. `ISONGraph 1.3.0` now means the same
   code in every language.
 
-- **C++ requires ison-cpp >= 1.1.0.** `ison_graph.hpp` includes
+- **C++ requires ison-cpp >= 1.1.2.** `ison_graph.hpp` includes
   `ison_parser.hpp` rather than vendoring a copy, so an ISON fix arrives on
   the next build instead of when someone re-cuts the copy. CMake takes
   `ISON_CPP_INCLUDE_DIR` and fails configuration when the header is absent;
-  a header older than 1.1.0 is a compile error rather than a behavioural
+  a header older than 1.1.2 is a compile error rather than a behavioural
   difference.
 
 ### Added
