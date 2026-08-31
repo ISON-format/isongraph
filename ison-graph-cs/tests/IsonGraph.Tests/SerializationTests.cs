@@ -572,8 +572,8 @@ public class CanonicalSerializationTests
             ("WORKS_ON", new("person", "2"), new("project", "p1"), Props.Of(("hours", "5"))),
             ("WORKS_ON", new("person", "10"), new("project", "p1"), Props.Of(("hours", "3"))),
         };
-        var n = order == 0 ? nodes : nodes.Reverse().ToArray();
-        var e = order == 0 ? edges : edges.Reverse().ToArray();
+        var n = order == 0 ? nodes : Enumerable.Reverse(nodes).ToArray();
+        var e = order == 0 ? edges : Enumerable.Reverse(edges).ToArray();
         foreach (var (t, i, props) in n)
             g.AddNode(t, i, props);
         foreach (var (rel, s, t, props) in e)
