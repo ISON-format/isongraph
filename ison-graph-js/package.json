@@ -32,7 +32,7 @@
   "author": "Mahesh Vaikri",
   "license": "MIT",
   "dependencies": {
-    "ison-parser": "^1.1.0"
+    "ison-parser": "^1.1.1"
   },
   "devDependencies": {
     "vitest": "^4.0.0"
