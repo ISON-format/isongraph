@@ -1,3 +1,20 @@
+# NuGet/login exchanges this workflow's GitHub OIDC token for a short-lived
+# API key, which requires a trusted publishing policy on nuget.org naming
+# exactly:
+#
+#   Repository Owner : ISON-format
+#   Repository       : isongraph
+#   Workflow File    : publish-nuget.yml     <- this file's name
+#   Environment      : (blank, unless `environment:` is set on the job below)
+#
+# The policy must be created by the same nuget.org account named in `user:`
+# below - the error distinguishes the policy *creator* from the package
+# *owner*, and only the creator's name works here.
+#
+# This repo moved from the `isongraph` org to `ISON-format`, so a policy
+# created against the old owner no longer matches and fails with HTTP 401.
+# Renaming this file breaks the policy's workflow_ref claim; update both.
+
 name: Publish NuGet package
 
 on:
