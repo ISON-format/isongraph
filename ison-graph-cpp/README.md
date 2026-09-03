@@ -31,11 +31,11 @@ reaches ISONGraph on the next build instead of when someone remembers to
 re-cut a vendored copy - but it does mean `ison_parser.hpp` must be on your
 include path.
 
-**Requires ison-cpp >= 1.1.2.** An older header is a compile error, not a
+**Requires ison-cpp >= 1.2.0.** An older header is a compile error, not a
 subtle behavioural difference:
 
 ```
-error: ison_parser.hpp is older than 1.1.2; ISONGraph needs its canonical
+error: ison_parser.hpp is older than 1.2.0; ISONGraph needs its canonical
        writer and name validation.
 ```
 
@@ -889,7 +889,7 @@ of the same type always line up.
 
 - C++17 compiler (GCC 7+, Clang 5+, MSVC 2017+)
 - CMake 3.14+ (optional)
-- Standard Library, plus ison-cpp >= 1.1.2 for ISON syntax
+- Standard Library, plus ison-cpp >= 1.2.0 for ISON syntax
 
 ## Building Tests
 

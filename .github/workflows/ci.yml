@@ -61,7 +61,7 @@ jobs:
           # Pinned to the floor ison_graph.hpp declares, so this builds against
           # the version we promise rather than whatever main happens to be -
           # and so an ison commit cannot break this repo with no commit here.
-          ref: v1.1.2
+          ref: v1.2.0
           path: _ison
       - name: Build and run tests
         working-directory: ison-graph-cpp

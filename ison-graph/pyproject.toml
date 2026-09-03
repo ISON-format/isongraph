@@ -44,10 +44,10 @@ classifiers = [
 ]
 requires-python = ">=3.9"
 dependencies = [
-    # 1.0.5 sorts canonical rows on the full field tuple. Earlier versions
-    # order on the first column alone, which leaves row order dependent on
-    # insertion order and breaks the canonical guarantee.
-    "ison-py>=1.0.5",
+    # 1.2.0 keeps floats intact in transit: an integral float stays 1.0
+    # rather than collapsing to 1, and -0.0 keeps its sign. Earlier versions
+    # lose that across a port boundary.
+    "ison-py>=1.2.0",
 ]
 
 [project.optional-dependencies]
