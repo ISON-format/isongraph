@@ -106,7 +106,7 @@ class TestCliMain:
         main()
 
         out = capsys.readouterr().out
-        assert '.field("name", StringField().required()' in out
+        assert '.field("name", String().required()' in out
 
 
 class TestModuleEntrypoint:

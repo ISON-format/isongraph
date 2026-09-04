@@ -914,11 +914,13 @@ EdgeType("KNOWS").cardinality(Cardinality.MANY_TO_MANY)
 ### Graph-Level Constraints
 
 ```python
-schema = GraphSchema("social") \
-    .node_types(Person, Company) \
-    .edge_types(Knows, WorksAt) \
+schema = (
+    GraphSchema("social")
+    .node_types(Person, Company)
+    .edge_types(Knows, WorksAt)
     .connected()      # Require graph to be connected
     .no_orphans()     # All nodes must have at least one edge
+)
 ```
 
 ## Extensions (experimental, 1.3.0)

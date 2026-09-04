@@ -384,8 +384,10 @@ class TestSchemaFormatter:
     def test_to_python(self, schema):
         code = SchemaFormatter.to_python(schema)
 
-        assert "person_type = NodeType(\"person\")" in code
-        assert "knows_type = EdgeType(\"KNOWS\")" in code
+        assert "person_type = (" in code
+        assert 'NodeType("person")' in code
+        assert "knows_type = (" in code
+        assert 'EdgeType("KNOWS")' in code
         assert "def validate(graph):" in code
 
     def test_to_typescript(self, schema):
@@ -419,4 +421,50 @@ class TestSchemaFormatter:
         schema = SchemaGenerator().generate(empty_data, name="empty")
 
         py = SchemaFormatter.to_python(schema)
-        assert 'schema = GraphSchema("empty")' in py
+        assert 'GraphSchema("empty")' in py
+
+
+class TestGeneratedPythonIsUsable:
+    """The generated Python has to run.
+
+    Every assertion elsewhere in this file checks for a substring, so the
+    output could name types that do not exist and chain calls across lines
+    with no brackets - both of which it did - and still pass.
+    """
+
+    @pytest.fixture
+    def schema(self, sample_data):
+        return SchemaGenerator().generate(sample_data, name="my_schema")
+
+    @pytest.mark.parametrize(
+        "render",
+        [SchemaFormatter.to_python, lambda s: SchemaGenerator().to_python(s)],
+        ids=["formatter", "generator"],
+    )
+    def test_generated_python_executes_against_the_real_schema_api(self, schema, render):
+        code = render(schema)
+        namespace: dict = {}
+        exec(compile(code, "<generated>", "exec"), namespace)
+
+        # The generated code builds ison_graph.schema.GraphSchema - a
+        # different class from the generator's own same-named dataclass.
+        built = namespace["schema"]
+        assert built.name == "my_schema"
+
+        from ison_graph import ISONGraph
+
+        result = built.validate(ISONGraph("g"))
+        assert hasattr(result, "valid")
+
+    @pytest.mark.parametrize(
+        "render",
+        [SchemaFormatter.to_python, lambda s: SchemaGenerator().to_python(s)],
+        ids=["formatter", "generator"],
+    )
+    def test_generated_python_names_only_real_field_types(self, schema, render):
+        code = render(schema)
+        # StringField and friends are the Rust/JS/TS/C#/C++ spelling; Python's
+        # field types are String/Int/Float/Bool.
+        for absent in ("StringField", "IntField", "FloatField", "BoolField",
+                       ".min_length(", ".max_length("):
+            assert absent not in code

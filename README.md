@@ -361,7 +361,7 @@ ISONGraph
 
 ### Core Types
 
-```python
+```text
 NodeRef = Tuple[str, Any]  # (type, id) e.g., ('person', 1)
 
 Node:
@@ -391,7 +391,7 @@ Path:
 
 #### Constructor
 
-```python
+```text
 ISONGraph(name: str = "graph", directed: bool = True)
 ```
 
@@ -463,7 +463,7 @@ way to do this inline.
 
 #### Fluent API
 
-```python
+```text
 graph.start(node_ref)
     .hop(rel_type, direction, where)
     .hops(n, rel_type, direction)
@@ -574,7 +574,7 @@ Ref('node_type').required()
 
 #### Node Type
 
-```python
+```text
 NodeType('name')
     .id(field_type)
     .field('name', field_type)
@@ -583,7 +583,7 @@ NodeType('name')
 
 #### Edge Type
 
-```python
+```text
 EdgeType('REL_TYPE')
     .from_node(node_type)
     .to_node(node_type)
@@ -598,7 +598,7 @@ EdgeType('REL_TYPE')
 
 #### Graph Schema
 
-```python
+```text
 GraphSchema('name')
     .node_types(Type1, Type2)
     .edge_types(Edge1, Edge2)

@@ -54,8 +54,8 @@ from ison_graph import ISONGraph
 
 # Export to GraphML
 graph = ISONGraph("example")
-graph.add_node("person", "alice", {"name": "Alice", "age": 30})
-graph.add_node("person", "bob", {"name": "Bob", "age": 25})
+graph.add_node("person", "alice", name="Alice", age=30)
+graph.add_node("person", "bob", name="Bob", age=25)
 graph.add_edge("KNOWS", ("person", "alice"), ("person", "bob"))
 
 converter = GraphMLConverter()

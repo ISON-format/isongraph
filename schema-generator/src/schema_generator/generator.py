@@ -218,7 +218,7 @@ class SchemaGenerator:
         """
         lines = [
             "from ison_graph.schema import GraphSchema, NodeType, EdgeType",
-            "from ison_graph.schema import StringField, IntField, FloatField, BoolField",
+            "from ison_graph.schema import String, Int, Float, Bool",
             "",
             f"# Schema: {schema.name}",
             "",
@@ -227,18 +227,23 @@ class SchemaGenerator:
         # Node types
         for node_type in schema.node_types:
             lines.append(f"# Node type: {node_type.name}")
-            lines.append(f"{node_type.name}_type = NodeType(\"{node_type.name}\")")
+            # The brackets matter: without them the chained calls below are
+            # separate statements, and the output is a syntax error.
+            lines.append(f"{node_type.name}_type = (")
+            lines.append(f"    NodeType(\"{node_type.name}\")")
 
             for field in node_type.fields:
                 field_code = self._field_to_python(field)
                 lines.append(f"    .field(\"{field.name}\", {field_code})")
 
+            lines.append(")")
             lines.append("")
 
         # Edge types
         for edge_type in schema.edge_types:
             lines.append(f"# Edge type: {edge_type.name}")
-            lines.append(f"{edge_type.name.lower()}_type = EdgeType(\"{edge_type.name}\")")
+            lines.append(f"{edge_type.name.lower()}_type = (")
+            lines.append(f"    EdgeType(\"{edge_type.name}\")")
 
             for source in edge_type.source_types:
                 lines.append(f"    .from_node(\"{source}\")")
@@ -254,27 +259,30 @@ class SchemaGenerator:
                 field_code = self._field_to_python(field)
                 lines.append(f"    .field(\"{field.name}\", {field_code})")
 
+            lines.append(")")
             lines.append("")
 
         # Create schema
-        lines.append(f"schema = GraphSchema(\"{schema.name}\")")
+        lines.append("schema = (")
+        lines.append(f"    GraphSchema(\"{schema.name}\")")
         for node_type in schema.node_types:
-            lines.append(f"    .node_type({node_type.name}_type)")
+            lines.append(f"    .node_types({node_type.name}_type)")
         for edge_type in schema.edge_types:
-            lines.append(f"    .edge_type({edge_type.name.lower()}_type)")
+            lines.append(f"    .edge_types({edge_type.name.lower()}_type)")
+        lines.append(")")
 
         return "\n".join(lines)
 
     def _field_to_python(self, field: FieldSchema) -> str:
         """Convert field schema to Python code."""
         type_map = {
-            'string': 'StringField',
-            'int': 'IntField',
-            'float': 'FloatField',
-            'bool': 'BoolField',
+            'string': 'String',
+            'int': 'Int',
+            'float': 'Float',
+            'bool': 'Bool',
         }
 
-        field_type = type_map.get(field.type, 'StringField')
+        field_type = type_map.get(field.type, 'String')
         parts = [f"{field_type}()"]
 
         if field.required:
@@ -285,9 +293,9 @@ class SchemaGenerator:
         if field.max_value is not None:
             parts.append(f".max({field.max_value})")
         if field.min_length is not None:
-            parts.append(f".min_length({field.min_length})")
+            parts.append(f".min({field.min_length})")
         if field.max_length is not None:
-            parts.append(f".max_length({field.max_length})")
+            parts.append(f".max({field.max_length})")
         if field.pattern:
             parts.append(f".pattern(\"{field.pattern}\")")
         if field.enum:

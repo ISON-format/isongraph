@@ -75,28 +75,41 @@ print(generator.to_dict(schema))
 
 ```python
 from ison_graph.schema import GraphSchema, NodeType, EdgeType
-from ison_graph.schema import StringField, IntField
+from ison_graph.schema import String, Int, Float, Bool
 
-person_type = NodeType("person")
-    .field("id", StringField().required())
-    .field("name", StringField().required().max_length(50))
-    .field("age", IntField().min(0).max(150))
-    .field("email", StringField().pattern("email"))
+# Schema: organization
 
-company_type = NodeType("company")
-    .field("id", StringField().required())
-    .field("name", StringField().required())
-    .field("size", StringField().enum(["small", "medium", "large"]))
+# Node type: company
+company_type = (
+    NodeType("company")
+    .field("id", String().required().min(4).max(4))
+    .field("name", String().required().min(9).max(9))
+    .field("size", String().required().min(5).max(5))
+)
 
-works_at_type = EdgeType("WORKS_AT")
+# Node type: person
+person_type = (
+    NodeType("person")
+    .field("age", Int().required().min(25).max(30))
+    .field("email", String().required().min(15).max(17).pattern("email"))
+    .field("id", String().required().min(1).max(1))
+    .field("name", String().required().min(3).max(5))
+)
+
+# Edge type: WORKS_AT
+works_at_type = (
+    EdgeType("WORKS_AT")
     .from_node("person")
     .to_node("company")
-    .field("role", StringField())
+    .field("role", String().required().min(8).max(8))
+)
 
-schema = GraphSchema("organization")
-    .node_type(person_type)
-    .node_type(company_type)
-    .edge_type(works_at_type)
+schema = (
+    GraphSchema("organization")
+    .node_types(company_type)
+    .node_types(person_type)
+    .edge_types(works_at_type)
+)
 ```
 
 #### TypeScript
