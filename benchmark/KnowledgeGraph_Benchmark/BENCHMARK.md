@@ -319,17 +319,17 @@ temperature = 0  # Deterministic responses
 
 #### ISONGraph (177 tokens)
 ```
-nodes.person
-id name age verified followers
-1 Alice 28 true 1500
-2 Bob 34 false 800
-3 Carol 29 true 2200
-
 edges.FOLLOWS
-source target since
-:person:1 :person:2 2020
-:person:1 :person:3 2021
-:person:2 :person:3 2019
+since source target
+2019 :person:2 :person:3
+2020 :person:1 :person:2
+2021 :person:1 :person:3
+
+nodes.person
+id age followers name verified
+1 28 1500 Alice true
+2 34 800 Bob false
+3 29 2200 Carol true
 ```
 
 #### JSON (596 tokens)

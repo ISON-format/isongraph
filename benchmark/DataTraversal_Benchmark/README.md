@@ -147,17 +147,17 @@ After running, the benchmark generates:
 
 **ISONGraph (119 tokens):**
 ```
-nodes.person
-id name age verified
-1 Alice 28 true
-2 Bob 34 false
-3 Carol 29 true
-
 edges.FOLLOWS
-source target since
-:person:1 :person:2 2020
-:person:1 :person:3 2021
-:person:2 :person:3 2019
+since source target
+2019 :person:2 :person:3
+2020 :person:1 :person:2
+2021 :person:1 :person:3
+
+nodes.person
+id age name verified
+1 28 Alice true
+2 34 Bob false
+3 29 Carol true
 ```
 
 **JSON (411 tokens):**

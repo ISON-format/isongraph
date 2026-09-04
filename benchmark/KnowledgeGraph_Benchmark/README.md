@@ -175,14 +175,14 @@ Accuracy per 1000 tokens - combines both metrics into a single efficiency measur
 
 **ISONGraph (177 tokens):**
 ```
-nodes.person
-id name age
-1 Alice 28
-2 Bob 34
-
 edges.FOLLOWS
-source target since
-:person:1 :person:2 2020
+since source target
+2020 :person:1 :person:2
+
+nodes.person
+id age name
+1 28 Alice
+2 34 Bob
 ```
 
 **Token Savings: 70.3%**
