@@ -147,7 +147,7 @@ npm install ison-graph-ts
 
 ```toml
 [dependencies]
-ison-graph = "1.3.0"
+ison-graph = "1.4.0"
 ```
 
 ### C++
@@ -670,15 +670,17 @@ source target <field1> <field2> ...
 | Float | `3.14` |
 | Boolean | `true` / `false` |
 | Null | `~` or `null` |
-| List | `[1,2,3]` |
-| Object | `{key:value}` |
+
+ISON scalars stop there. A value like `[1,2,3]` is legal but carries no
+structure - it parses back as the string `[1,2,3]`, not as a list. Nest by
+adding a block and referencing it, not by embedding a literal.
 
 ### ISONL (Streaming Format)
 
 ```
-nodes.person|id name age|1 Alice 30
-nodes.person|id name age|2 Bob 25
-edges.KNOWS|source target since|:person:1 :person:2 2020
+edges.KNOWS|since source target|2020 :person:1 :person:2
+nodes.person|id age name|1 30 Alice
+nodes.person|id age name|2 25 Bob
 ```
 
 ### Canonical Serialization

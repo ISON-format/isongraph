@@ -160,8 +160,8 @@ byte-identical with every other ISONGraph language port.
 ```csharp
 public readonly record struct NodeRef(string Type, string Id);
 
-// Properties are string dictionaries
-Dictionary<string, string> props;
+// Properties keep the type they were given
+Dictionary<string, object?> props;
 
 public enum Direction { Out, In, Both }
 ```

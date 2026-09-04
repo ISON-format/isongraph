@@ -25,7 +25,7 @@
 
 ```toml
 [dependencies]
-ison-graph = "1.3.0"
+ison-graph = "1.4.0"
 ```
 
 ## Quick Start
@@ -47,7 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Add edges
     graph.add_edge("KNOWS", ("person", "1"), ("person", "2"), props![("since", 2020i64)])?;
-    graph.add_edge("WORKS_AT", ("person", "1"), ("company", "100"), vec![])?;
+    graph.add_edge("WORKS_AT", ("person", "1"), ("company", "100"), props![])?;
 
     // Query neighbors
     let friends = graph.neighbors(&("person", "1"), Some("KNOWS"), Direction::Out);
@@ -175,7 +175,7 @@ pub enum Direction {
 ```rust
 use ison_graph::GraphError;
 
-match graph.add_node("person", "1", vec![]) {
+match graph.add_node("person", "1", props![]) {
     Ok(node) => println!("Added: {:?}", node),
     Err(GraphError::DuplicateNode(t, id)) => println!("Already exists: {}:{}", t, id),
     Err(GraphError::NodeNotFound(t, id)) => println!("Not found: {}:{}", t, id),
@@ -196,13 +196,13 @@ use ison_graph::{ISONGraph, query::{QueryEngine, QueryResult, QueryData}};
 
 // Create and populate graph
 let mut graph = ISONGraph::new("social");
-graph.add_node("person", "alice", vec![("name", "Alice"), ("age", "30"), ("city", "NYC")])?;
-graph.add_node("person", "bob", vec![("name", "Bob"), ("age", "25"), ("city", "LA")])?;
-graph.add_node("person", "charlie", vec![("name", "Charlie"), ("age", "35"), ("city", "NYC")])?;
-graph.add_node("company", "techcorp", vec![("name", "TechCorp"), ("size", "500")])?;
-graph.add_edge("KNOWS", ("person", "alice"), ("person", "bob"), vec![("since", "2020")])?;
-graph.add_edge("KNOWS", ("person", "bob"), ("person", "charlie"), vec![("since", "2021")])?;
-graph.add_edge("WORKS_AT", ("person", "alice"), ("company", "techcorp"), vec![("role", "Engineer")])?;
+graph.add_node("person", "alice", props![("name", "Alice"), ("age", 30i64), ("city", "NYC")])?;
+graph.add_node("person", "bob", props![("name", "Bob"), ("age", 25i64), ("city", "LA")])?;
+graph.add_node("person", "charlie", props![("name", "Charlie"), ("age", 35i64), ("city", "NYC")])?;
+graph.add_node("company", "techcorp", props![("name", "TechCorp"), ("size", 500i64)])?;
+graph.add_edge("KNOWS", ("person", "alice"), ("person", "bob"), props![("since", "2020")])?;
+graph.add_edge("KNOWS", ("person", "bob"), ("person", "charlie"), props![("since", "2021")])?;
+graph.add_edge("WORKS_AT", ("person", "alice"), ("company", "techcorp"), props![("role", "Engineer")])?;
 
 // Create query engine
 let engine = QueryEngine::new(&graph);
@@ -461,9 +461,9 @@ let schema = GraphSchema::new("social")
 
 // Validate graph
 let mut graph = ISONGraph::new("test");
-graph.add_node("person", "1", vec![("name", "Alice"), ("age", "30")]).unwrap();
-graph.add_node("person", "2", vec![("name", "Bob"), ("age", "25")]).unwrap();
-graph.add_edge("KNOWS", ("person", "1"), ("person", "2"), vec![]).unwrap();
+graph.add_node("person", "1", props![("name", "Alice"), ("age", 30i64)]).unwrap();
+graph.add_node("person", "2", props![("name", "Bob"), ("age", 25i64)]).unwrap();
+graph.add_edge("KNOWS", ("person", "1"), ("person", "2"), props![]).unwrap();
 
 let result = schema.validate(&graph);
 if result.is_valid() {
@@ -773,26 +773,26 @@ let schema = GraphSchema::new("blog")
 // Create and populate graph
 let mut graph = ISONGraph::new("blog");
 
-graph.add_node("user", "1", vec![
+graph.add_node("user", "1", props![
     ("username", "alice_dev"),
     ("email", "alice@example.com"),
-    ("age", "28"),
+    ("age", 28i64),
 ]).unwrap();
 
-graph.add_node("user", "2", vec![
+graph.add_node("user", "2", props![
     ("username", "bob_coder"),
     ("email", "bob@example.com"),
-    ("age", "32"),
+    ("age", 32i64),
 ]).unwrap();
 
-graph.add_node("post", "101", vec![
+graph.add_node("post", "101", props![
     ("title", "Introduction to Rust"),
     ("content", "Rust is a systems programming language..."),
     ("status", "published"),
 ]).unwrap();
 
-graph.add_edge("AUTHORED", ("user", "1"), ("post", "101"), vec![]).unwrap();
-graph.add_edge("FOLLOWS", ("user", "2"), ("user", "1"), vec![]).unwrap();
+graph.add_edge("AUTHORED", ("user", "1"), ("post", "101"), props![]).unwrap();
+graph.add_edge("FOLLOWS", ("user", "2"), ("user", "1"), props![]).unwrap();
 
 // Validate
 let result = schema.validate(&graph);

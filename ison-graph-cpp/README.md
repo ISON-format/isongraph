@@ -195,7 +195,7 @@ struct NodeRef {
     std::string id;
 };
 
-using Properties = std::map<std::string, std::string>;
+using Properties = std::map<std::string, ison::Value>;
 
 enum class Direction {
     Out,
