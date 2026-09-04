@@ -6,6 +6,55 @@ share this file and, from 1.3.0, a single version number.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] — unreleased
+
+Rust, C# and C++ change their property API. Those three stored every value
+as a string, so they serialized differently from Python, JS and TS - one
+graph produced two different documents depending on which language wrote
+it. They now use their parser's own value type.
+
+### Changed — breaking (Rust, C#, C++ only)
+
+- **Properties carry types.** `HashMap<String, String>` becomes
+  `HashMap<String, ison_rs::Value>`, `Dictionary<string, string>` becomes
+  `Dictionary<string, object?>`, and `map<string, string>` becomes
+  `map<string, ison::Value>`. Not a new union - the parser already models
+  exactly the types the format has, and keeping a second one beside it is
+  what caused the split.
+
+  ```
+  # 1.3.0 (Rust, C#, C++)      # 1.4.0 - matching Python/JS/TS
+  nodes.company                nodes.company
+  id listed name staff         id listed name staff
+  acme "false" "Acme" "42"     acme false "Acme Corp" 42
+  ```
+
+- **Rust callers use `props!`.** A `Vec` is homogeneous, so a literal mixing
+  an int and a string cannot be written directly, and the orphan rule stops
+  this crate adding `From` impls to `ison_rs::Value`. `props![("name",
+  "Acme"), ("staff", 42i64)]` converts each value before collecting.
+  `vec![("k", "v")]` no longer compiles for properties.
+
+- **A number now compares as a number** in queries, rather than as a parse
+  of its rendering. A string holding a number still compares numerically,
+  so filters written against the old storage keep working. Schema
+  validation is unchanged - it still validates the rendered text; making it
+  type-aware is a separate change.
+
+### Fixed
+
+- The three string-only ports round-trip values without flattening them.
+  Loading `42` gave back the string `"42"`, which then re-emitted quoted.
+
+### Known limitation
+
+- **An integral float originated in JavaScript or TypeScript cannot be
+  distinguished from an integer.** `1.0 === 1` in JS, so a JS-authored
+  `{weight: 1.0}` emits `1` where Python emits `1.0`. This is a property of
+  the language, not of ISONGraph. Values arriving *from* ISON keep their
+  form in every port; only origination is affected. The shared test fixture
+  deliberately contains no integral float for this reason.
+
 ## [1.3.0] — 2026-08-31
 
 Serialized output changes in this release. A graph written by 1.3.0 is not

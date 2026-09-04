@@ -72,10 +72,15 @@ int main() {
     ISONGraph graph("social");
 
     // Add nodes
-    graph.addNode("person", "1", {{"name", "Alice"}, {"age", "30"}});
-    graph.addNode("person", "2", {{"name", "Bob"}, {"age", "25"}});
-    graph.addNode("person", "3", {{"name", "Charlie"}, {"age", "35"}});
-    graph.addNode("company", "100", {{"name", "TechCorp"}});
+    // Properties keep their type: 30 is a number, "30" would be a string,
+    // and the two serialize differently.
+    graph.addNode("person", "1", {{"name", ison::Value(std::string("Alice"))},
+                                  {"age", ison::Value(int64_t(30))}});
+    graph.addNode("person", "2", {{"name", ison::Value(std::string("Bob"))},
+                                  {"age", ison::Value(int64_t(25))}});
+    graph.addNode("person", "3", {{"name", ison::Value(std::string("Charlie"))},
+                                  {"age", ison::Value(int64_t(35))}});
+    graph.addNode("company", "100", {{"name", ison::Value(std::string("TechCorp"))}});
 
     // Add edges
     graph.addEdge("KNOWS", {"person", "1"}, {"person", "2"}, {{"since", "2020"}});

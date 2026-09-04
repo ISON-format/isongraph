@@ -46,9 +46,11 @@ using IsonGraph;
 var graph = new ISONGraph("social");
 
 // Add nodes
-graph.AddNode("person", "1", new() { ["name"] = "Alice", ["age"] = "30" });
-graph.AddNode("person", "2", new() { ["name"] = "Bob", ["age"] = "25" });
-graph.AddNode("person", "3", new() { ["name"] = "Charlie", ["age"] = "35" });
+// Properties keep their type: 30 is a number, "30" would be a string, and
+// the two serialize differently.
+graph.AddNode("person", "1", new() { ["name"] = "Alice", ["age"] = 30L });
+graph.AddNode("person", "2", new() { ["name"] = "Bob", ["age"] = 25L });
+graph.AddNode("person", "3", new() { ["name"] = "Charlie", ["age"] = 35L });
 graph.AddNode("company", "100", new() { ["name"] = "TechCorp" });
 
 // Add edges

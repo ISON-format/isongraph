@@ -38,12 +38,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut graph = ISONGraph::new("social");
 
     // Add nodes
-    graph.add_node("person", "1", vec![("name", "Alice"), ("age", "30")])?;
-    graph.add_node("person", "2", vec![("name", "Bob"), ("age", "25")])?;
-    graph.add_node("company", "100", vec![("name", "TechCorp")])?;
+    // Properties keep their type. 30 is a number; "30" would be a string,
+    // and the two serialize differently. `props!` converts each value, which
+    // is what lets one list mix an int and a string.
+    graph.add_node("person", "1", props![("name", "Alice"), ("age", 30i64)])?;
+    graph.add_node("person", "2", props![("name", "Bob"), ("age", 25i64)])?;
+    graph.add_node("company", "100", props![("name", "TechCorp")])?;
 
     // Add edges
-    graph.add_edge("KNOWS", ("person", "1"), ("person", "2"), vec![("since", "2020")])?;
+    graph.add_edge("KNOWS", ("person", "1"), ("person", "2"), props![("since", 2020i64)])?;
     graph.add_edge("WORKS_AT", ("person", "1"), ("company", "100"), vec![])?;
 
     // Query neighbors
