@@ -100,11 +100,13 @@ source target since
 
         Assert.Equal(2, graph.NodeCount());
         Assert.Equal(1, graph.EdgeCount());
-        Assert.Equal("Alice", graph.GetNode("person", "1").Properties["name"]);
+        Assert.Equal("Alice", PropertyValue.ValueText(graph.GetNode("person", "1").Properties["name"]));
         Assert.True(graph.HasEdge("KNOWS", new("person", "1"), new("person", "2")));
-        Assert.Equal("2020",
+        // "2020" parses as the number 2020 now, not a string - which is the
+        // point of typed properties. Compare the rendering.
+        Assert.Equal("2020", PropertyValue.ValueText(
                      graph.GetEdge("KNOWS", new("person", "1"), new("person", "2"))
-                          .Properties["since"]);
+                          .Properties["since"]));
     }
 
     [Fact]
@@ -126,7 +128,7 @@ source target since
 
         Assert.Equal(graph1.NodeCount(), graph2.NodeCount());
         Assert.Equal(graph1.EdgeCount(), graph2.EdgeCount());
-        Assert.Equal("30", graph2.GetNode("person", "1").Properties["age"]);
+        Assert.Equal("30", PropertyValue.ValueText(graph2.GetNode("person", "1").Properties["age"]));
     }
 
     public static readonly (string Key, string Value)[] SpecialValues =
@@ -143,7 +145,7 @@ source target since
     public void RoundTripSpecialValuesIson()
     {
         var graph1 = new ISONGraph();
-        graph1.AddNode("doc", "1", SpecialValues.ToDictionary(p => p.Key, p => p.Value));
+        graph1.AddNode("doc", "1", SpecialValues.ToDictionary(p => p.Key, p => (object?)p.Value));
 
         var graph2 = ISONGraph.FromIson(graph1.ToIson());
 
@@ -156,7 +158,7 @@ source target since
     public void RoundTripSpecialValuesIsonl()
     {
         var graph1 = new ISONGraph();
-        graph1.AddNode("doc", "1", SpecialValues.ToDictionary(p => p.Key, p => p.Value));
+        graph1.AddNode("doc", "1", SpecialValues.ToDictionary(p => p.Key, p => (object?)p.Value));
 
         var graph2 = ISONGraph.FromIsonl(graph1.ToIsonl());
 
@@ -176,8 +178,8 @@ source target since
 
         var graph2 = ISONGraph.FromIsonl(graph1.ToIsonl());
         var edge = graph2.GetEdge("REL", new("a", "1"), new("a", "2"));
-        Assert.Equal("has | pipe and space", edge.Properties["note"]);
-        Assert.Equal("", edge.Properties["empty"]);
+        Assert.Equal("has | pipe and space", PropertyValue.ValueText(edge.Properties["note"]));
+        Assert.Equal("", PropertyValue.ValueText(edge.Properties["empty"]));
     }
 
     [Fact]
@@ -331,7 +333,7 @@ edges.KNOWS|source target since|:person:1 :person:2 2020
         var graph = ISONGraph.FromIsonl(isonl);
         Assert.Equal(2, graph.NodeCount());
         Assert.Equal(1, graph.EdgeCount());
-        Assert.Equal("25", graph.GetNode("person", "2").Properties["age"]);
+        Assert.Equal("25", PropertyValue.ValueText(graph.GetNode("person", "2").Properties["age"]));
     }
 
     [Fact]
@@ -346,7 +348,7 @@ edges.KNOWS|source target since|:person:1 :person:2 2020
         var graph2 = ISONGraph.FromIsonl(graph1.ToIsonl());
         Assert.Equal(2, graph2.NodeCount());
         Assert.Equal(1, graph2.EdgeCount());
-        Assert.Equal("Acme Corp", graph2.GetNode("company", "acme").Properties["name"]);
+        Assert.Equal("Acme Corp", PropertyValue.ValueText(graph2.GetNode("company", "acme").Properties["name"]));
         Assert.Equal("Engineer II",
                      graph2.GetEdge("WORKS_AT", new("person", "1"), new("company", "acme"))
                            .Properties["role"]);
@@ -404,7 +406,7 @@ edges.KNOWS|source target since|:person:1 :person:2 2020
         var graph1 = new ISONGraph();
         graph1.AddNode("doc", "1", Props.Of(("tag", "a|b|c")));
         var graph2 = ISONGraph.FromIsonl(graph1.ToIsonl());
-        Assert.Equal("a|b|c", graph2.GetNode("doc", "1").Properties["tag"]);
+        Assert.Equal("a|b|c", PropertyValue.ValueText(graph2.GetNode("doc", "1").Properties["tag"]));
     }
 }
 
@@ -514,9 +516,9 @@ public class CanonicalSerializationTests
 {
     private const string GoldenIson =
         "edges.KNOWS\n" +
-        "since source target\n" +
-        "\"2020\" :person:1 :person:2\n" +
-        "\"2021\" :person:10 :person:1\n" +
+        "since source target weight\n" +
+        "\"2020\" :person:1 :person:2 1.75\n" +
+        "\"2021\" :person:10 :person:1 0.5\n" +
         "\n" +
         "edges.WORKS_AT\n" +
         "role source target\n" +
@@ -524,53 +526,57 @@ public class CanonicalSerializationTests
         "\n" +
         "edges.WORKS_ON\n" +
         "hours source target\n" +
-        "\"3\" :person:10 :project:p1\n" +
-        "\"5\" :person:2 :project:p1\n" +
+        "3 :person:10 :project:p1\n" +
+        "5 :person:2 :project:p1\n" +
         "\n" +
         "nodes.company\n" +
-        "id name\n" +
-        "acme \"Acme Corp\"\n" +
+        "id listed name staff\n" +
+        "acme false \"Acme Corp\" 42\n" +
         "\n" +
         "nodes.person\n" +
-        "id age name\n" +
-        "\"1\" \"30\" Alice\n" +
-        "\"10\" \"22\" Jax\n" +
-        "\"2\" \"25\" Bob\n" +
+        "id active age name score\n" +
+        "\"1\" true \"30\" Alice 9.5\n" +
+        "\"10\" false \"22\" Jax -2.25\n" +
+        "\"2\" null \"25\" Bob null\n" +
         "\n" +
         "nodes.project\n" +
-        "id name tag\n" +
-        "p1 Alpha a|b";
+        "id budget name tag\n" +
+        "p1 1250 Alpha a|b";
 
     private const string GoldenIsonl =
-        "edges.KNOWS|since source target|\"2020\" :person:1 :person:2\n" +
-        "edges.KNOWS|since source target|\"2021\" :person:10 :person:1\n" +
+        "edges.KNOWS|since source target weight|\"2020\" :person:1 :person:2 1.75\n" +
+        "edges.KNOWS|since source target weight|\"2021\" :person:10 :person:1 0.5\n" +
         "edges.WORKS_AT|role source target|\"Lead Engineer\" :person:1 :company:acme\n" +
-        "edges.WORKS_ON|hours source target|\"3\" :person:10 :project:p1\n" +
-        "edges.WORKS_ON|hours source target|\"5\" :person:2 :project:p1\n" +
-        "nodes.company|id name|acme \"Acme Corp\"\n" +
-        "nodes.person|id age name|\"1\" \"30\" Alice\n" +
-        "nodes.person|id age name|\"10\" \"22\" Jax\n" +
-        "nodes.person|id age name|\"2\" \"25\" Bob\n" +
-        "nodes.project|id name tag|p1 Alpha \"a\\|b\"";
+        "edges.WORKS_ON|hours source target|3 :person:10 :project:p1\n" +
+        "edges.WORKS_ON|hours source target|5 :person:2 :project:p1\n" +
+        "nodes.company|id listed name staff|acme false \"Acme Corp\" 42\n" +
+        "nodes.person|id active age name score|\"1\" true \"30\" Alice 9.5\n" +
+        "nodes.person|id active age name score|\"10\" false \"22\" Jax -2.25\n" +
+        "nodes.person|id active age name score|\"2\" null \"25\" Bob null\n" +
+        "nodes.project|id budget name tag|p1 1250 Alpha \"a\\|b\"";
 
     private static ISONGraph BuildCanonicalFixture(int order)
     {
         var g = new ISONGraph("fixture");
-        var nodes = new (string Type, string Id, Dictionary<string, string> Props)[]
+        var nodes = new (string Type, string Id, Dictionary<string, object?> Props)[]
         {
-            ("company", "acme", Props.Of(("name", "Acme Corp"))),
-            ("person", "1", Props.Of(("name", "Alice"), ("age", "30"))),
-            ("person", "10", Props.Of(("name", "Jax"), ("age", "22"))),
+            // Mixed types on purpose: the string ids and ages pin that a value
+            // which would reparse as a number stays quoted, the int, float and
+            // bool pin that a real number does not. No integral float - JS
+            // cannot originate one, so a shared fixture must not ask for it.
+            ("company", "acme", Props.Of(("name", "Acme Corp"), ("staff", 42L), ("listed", false))),
+            ("person", "1", Props.Of(("name", "Alice"), ("age", "30"), ("score", 9.5), ("active", true))),
+            ("person", "10", Props.Of(("name", "Jax"), ("age", "22"), ("score", -2.25), ("active", false))),
             ("person", "2", Props.Of(("name", "Bob"), ("age", "25"))),
-            ("project", "p1", Props.Of(("name", "Alpha"), ("tag", "a|b"))),
+            ("project", "p1", Props.Of(("name", "Alpha"), ("tag", "a|b"), ("budget", 1250L))),
         };
-        var edges = new (string Rel, NodeRef Source, NodeRef Target, Dictionary<string, string> Props)[]
+        var edges = new (string Rel, NodeRef Source, NodeRef Target, Dictionary<string, object?> Props)[]
         {
-            ("KNOWS", new("person", "10"), new("person", "1"), Props.Of(("since", "2021"))),
-            ("KNOWS", new("person", "1"), new("person", "2"), Props.Of(("since", "2020"))),
+            ("KNOWS", new("person", "10"), new("person", "1"), Props.Of(("since", "2021"), ("weight", 0.5))),
+            ("KNOWS", new("person", "1"), new("person", "2"), Props.Of(("since", "2020"), ("weight", 1.75))),
             ("WORKS_AT", new("person", "1"), new("company", "acme"), Props.Of(("role", "Lead Engineer"))),
-            ("WORKS_ON", new("person", "2"), new("project", "p1"), Props.Of(("hours", "5"))),
-            ("WORKS_ON", new("person", "10"), new("project", "p1"), Props.Of(("hours", "3"))),
+            ("WORKS_ON", new("person", "2"), new("project", "p1"), Props.Of(("hours", 5L))),
+            ("WORKS_ON", new("person", "10"), new("project", "p1"), Props.Of(("hours", 3L))),
         };
         var n = order == 0 ? nodes : Enumerable.Reverse(nodes).ToArray();
         var e = order == 0 ? edges : Enumerable.Reverse(edges).ToArray();

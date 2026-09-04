@@ -108,7 +108,23 @@ struct NodeRefHash {
 };
 
 /** Properties map */
-using Properties = std::map<std::string, std::string>;
+/// Property values are ISON values. Storing strings here was what made this
+/// port emit every value quoted and disagree with the typed ports; the
+/// parser already models exactly the types the format has, so it owns them.
+using Properties = std::map<std::string, ison::Value>;
+
+/// Render a property as text - the form every value had before properties
+/// carried types. Query string operators, schema validation and the
+/// visualiser use it so their behaviour is unchanged by typing the storage.
+inline std::string valueToText(const ison::Value& value) {
+    if (value.is_null()) return std::string();
+    if (value.is_bool()) return value.as_bool() ? "true" : "false";
+    if (value.is_int()) return std::to_string(value.as_int());
+    if (value.is_float()) return std::to_string(value.as_float());
+    if (value.is_string()) return value.as_string();
+    if (value.is_reference()) return value.as_reference_ptr()->to_ison();
+    return std::string();
+}
 
 /** Traversal direction */
 enum class Direction {
@@ -1210,7 +1226,10 @@ public:
      * Every id and property in this port is a string, so a null becomes an
      * absent property rather than the literal "null".
      */
-    static bool valueText(const ison::Value& value, std::string& out) {
+    /// Node ids are identifiers rather than values, so they are always text.
+    /// Property values keep whatever type the parser produced - flattening
+    /// them here was what made this port emit every value quoted.
+    static bool idText(const ison::Value& value, std::string& out) {
         if (value.is_null()) return false;
         if (value.is_string()) { out = value.as_string(); return true; }
         if (value.is_reference()) { out = value.as_reference_ptr()->to_ison(); return true; }
@@ -1241,14 +1260,13 @@ public:
                 const ison::Row& row = block.rows[r];
                 ison::Row::const_iterator idIt = row.find("id");
                 std::string id;
-                if (idIt == row.end() || !valueText(idIt->second, id)) {
+                if (idIt == row.end() || !idText(idIt->second, id)) {
                     throw GraphError("fromIson: node row has no id");
                 }
                 Properties props;
                 for (ison::Row::const_iterator it = row.begin(); it != row.end(); ++it) {
                     if (it->first == "id") continue;
-                    std::string text;
-                    if (valueText(it->second, text)) props[it->first] = text;
+                    if (!it->second.is_null()) props[it->first] = it->second;
                 }
                 graph.addNode(block.name, id, props);
             }
@@ -1273,8 +1291,7 @@ public:
                 Properties props;
                 for (ison::Row::const_iterator it = row.begin(); it != row.end(); ++it) {
                     if (it->first == "source" || it->first == "target") continue;
-                    std::string text;
-                    if (valueText(it->second, text)) props[it->first] = text;
+                    if (!it->second.is_null()) props[it->first] = it->second;
                 }
                 // Reference::type is optional; an untyped reference cannot name
                 // a node in this graph, so treat it as a malformed edge.

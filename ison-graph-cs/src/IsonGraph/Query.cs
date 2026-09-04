@@ -103,7 +103,7 @@ public sealed class Condition
     };
 
     /// <summary>Evaluate the condition against a property dictionary.</summary>
-    public bool Evaluate(IReadOnlyDictionary<string, string> properties)
+    public bool Evaluate(IReadOnlyDictionary<string, object?> properties)
     {
         // EXISTS / NOT EXISTS checks
         if (Operator == Operator.Exists)
@@ -115,13 +115,15 @@ public sealed class Condition
         if (!properties.TryGetValue(Field, out var propValue))
             return false;
 
-        // Numeric comparison first when the condition value is numeric.
+        // Numeric comparison first when the condition value is numeric. A
+        // property that is genuinely a number compares exactly; one stored as
+        // a string still parses, so queries written before properties were
+        // typed keep working.
         if (Value is long or double &&
             Operator is Operator.Eq or Operator.Ne or Operator.Gt
                         or Operator.Ge or Operator.Lt or Operator.Le)
         {
-            if (!double.TryParse(propValue, NumberStyles.Float | NumberStyles.AllowLeadingSign,
-                                 CultureInfo.InvariantCulture, out var propNum))
+            if (PropertyValue.AsDouble(propValue) is not double propNum)
             {
                 return false;
             }
@@ -138,28 +140,30 @@ public sealed class Condition
             };
         }
 
-        // String comparison
+        // String comparison, against the value's text form - which is what
+        // every property was before they carried types.
         var valStr = ValueToString(Value);
+        var propText = PropertyValue.ValueText(propValue);
 
         switch (Operator)
         {
-            case Operator.Eq: return propValue == valStr;
-            case Operator.Ne: return propValue != valStr;
-            case Operator.Gt: return string.CompareOrdinal(propValue, valStr) > 0;
-            case Operator.Ge: return string.CompareOrdinal(propValue, valStr) >= 0;
-            case Operator.Lt: return string.CompareOrdinal(propValue, valStr) < 0;
-            case Operator.Le: return string.CompareOrdinal(propValue, valStr) <= 0;
+            case Operator.Eq: return propText == valStr;
+            case Operator.Ne: return propText != valStr;
+            case Operator.Gt: return string.CompareOrdinal(propText, valStr) > 0;
+            case Operator.Ge: return string.CompareOrdinal(propText, valStr) >= 0;
+            case Operator.Lt: return string.CompareOrdinal(propText, valStr) < 0;
+            case Operator.Le: return string.CompareOrdinal(propText, valStr) <= 0;
             case Operator.Contains:
-                return propValue.Contains(valStr, StringComparison.Ordinal);
+                return propText.Contains(valStr, StringComparison.Ordinal);
             case Operator.StartsWith:
-                return propValue.StartsWith(valStr, StringComparison.Ordinal);
+                return propText.StartsWith(valStr, StringComparison.Ordinal);
             case Operator.EndsWith:
-                return propValue.EndsWith(valStr, StringComparison.Ordinal);
+                return propText.EndsWith(valStr, StringComparison.Ordinal);
             case Operator.Matches:
                 try
                 {
                     // Python re.match semantics: the match must start at position 0.
-                    var m = Regex.Match(propValue, valStr);
+                    var m = Regex.Match(propText, valStr);
                     return m.Success && m.Index == 0;
                 }
                 catch (ArgumentException)
@@ -243,9 +247,9 @@ public sealed class NodeResult
 {
     public string Type { get; }
     public string Id { get; }
-    public Dictionary<string, string> Properties { get; }
+    public Dictionary<string, object?> Properties { get; }
 
-    public NodeResult(string type, string id, Dictionary<string, string> properties)
+    public NodeResult(string type, string id, Dictionary<string, object?> properties)
     {
         Type = type;
         Id = id;
@@ -259,10 +263,10 @@ public sealed class EdgeResult
     public string RelType { get; }
     public NodeRef Source { get; }
     public NodeRef Target { get; }
-    public Dictionary<string, string> Properties { get; }
+    public Dictionary<string, object?> Properties { get; }
 
     public EdgeResult(string relType, NodeRef source, NodeRef target,
-                      Dictionary<string, string> properties)
+                      Dictionary<string, object?> properties)
     {
         RelType = relType;
         Source = source;
@@ -1176,7 +1180,7 @@ public sealed class QueryEngine
     // Condition matching: OR across groups, AND within a group.
     // -------------------------------------------------------------------------
 
-    internal static bool MatchesConditions(IReadOnlyDictionary<string, string> properties,
+    internal static bool MatchesConditions(IReadOnlyDictionary<string, object?> properties,
                                            List<List<Condition>> conditionGroups)
     {
         if (conditionGroups.Count == 0)
@@ -1220,10 +1224,13 @@ public sealed class QueryEngine
             var present = nodes.Where(n => n.Properties.ContainsKey(orderBy)).ToList();
             var missing = nodes.Where(n => !n.Properties.ContainsKey(orderBy)).ToList();
 
+            // Sort on the rendered value; PropertyValueComparer already puts
+            // numbers before text, and rendering keeps that behaviour now that
+            // a property may not be a string.
             var comparer = new PropertyValueComparer();
             present = parsed.OrderDir == SortOrder.Desc
-                ? present.OrderByDescending(n => n.Properties[orderBy], comparer).ToList()
-                : present.OrderBy(n => n.Properties[orderBy], comparer).ToList();
+                ? present.OrderByDescending(n => PropertyValue.ValueText(n.Properties[orderBy]), comparer).ToList()
+                : present.OrderBy(n => PropertyValue.ValueText(n.Properties[orderBy]), comparer).ToList();
 
             nodes = present.Concat(missing).ToList();
         }
@@ -1240,7 +1247,7 @@ public sealed class QueryEngine
         {
             data = nodes.Select(n =>
             {
-                var projected = new Dictionary<string, string>();
+                var projected = new Dictionary<string, object?>();
                 foreach (var f in fields)
                 {
                     if (n.Properties.TryGetValue(f, out var v))
@@ -1252,7 +1259,7 @@ public sealed class QueryEngine
         else
         {
             data = nodes
-                .Select(n => new NodeResult(n.Type, n.Id, new Dictionary<string, string>(n.Properties)))
+                .Select(n => new NodeResult(n.Type, n.Id, new Dictionary<string, object?>(n.Properties)))
                 .ToList();
         }
 
@@ -1297,7 +1304,7 @@ public sealed class QueryEngine
 
         var data = edges
             .Select(e => new EdgeResult(e.RelType, e.Source, e.Target,
-                                        new Dictionary<string, string>(e.Properties)))
+                                        new Dictionary<string, object?>(e.Properties)))
             .ToList();
 
         return new QueryResult
@@ -1390,7 +1397,7 @@ public sealed class QueryEngine
         {
             var edges = path.Edges
                 .Select(e => new EdgeResult(e.RelType, e.Source, e.Target,
-                                            new Dictionary<string, string>(e.Properties)))
+                                            new Dictionary<string, object?>(e.Properties)))
                 .ToList();
             paths.Add(new PathResult(new List<NodeRef>(path.Nodes), edges, path.Length));
         }
@@ -1433,8 +1440,7 @@ public sealed class QueryEngine
             if (!MatchesConditions(node.Properties, parsed.ConditionGroups))
                 continue;
             if (node.Properties.TryGetValue(parsed.Property, out var raw) &&
-                double.TryParse(raw, NumberStyles.Float | NumberStyles.AllowLeadingSign,
-                                CultureInfo.InvariantCulture, out var v))
+                PropertyValue.AsDouble(raw) is double v)
             {
                 values.Add(v);
             }

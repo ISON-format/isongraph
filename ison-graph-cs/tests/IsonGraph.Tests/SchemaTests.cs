@@ -149,7 +149,7 @@ public class SchemaDefaultsTests
         var result = new GraphSchema("s").NodeTypes(person).Validate(graph);
 
         Assert.True(result.Valid);
-        Assert.Equal("active", graph.GetNode("person", "1").Properties["status"]);
+        Assert.Equal("active", PropertyValue.ValueText(graph.GetNode("person", "1").Properties["status"]));
     }
 
     [Fact]
@@ -163,7 +163,7 @@ public class SchemaDefaultsTests
         var result = new GraphSchema("s").NodeTypes(person).Validate(graph);
 
         Assert.True(result.Valid);
-        Assert.Equal("active", graph.GetNode("person", "1").Properties["status"]);
+        Assert.Equal("active", PropertyValue.ValueText(graph.GetNode("person", "1").Properties["status"]));
     }
 
     [Fact]
@@ -190,7 +190,7 @@ public class SchemaDefaultsTests
         var result = new GraphSchema("s").NodeTypes(person).Validate(graph);
 
         Assert.True(result.Valid);
-        Assert.Equal("inactive", graph.GetNode("person", "1").Properties["status"]);
+        Assert.Equal("inactive", PropertyValue.ValueText(graph.GetNode("person", "1").Properties["status"]));
     }
 
     [Fact]
@@ -210,7 +210,7 @@ public class SchemaDefaultsTests
 
         Assert.True(result.Valid);
         var edge = graph.GetEdge("KNOWS", new("person", "1"), new("person", "2"));
-        Assert.Equal("1", edge.Properties["weight"]);
+        Assert.Equal("1", PropertyValue.ValueText(edge.Properties["weight"]));
     }
 
     [Fact]

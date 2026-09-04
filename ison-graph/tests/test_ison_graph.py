@@ -717,9 +717,9 @@ source target since
 
 CANONICAL_GOLDEN_ISON = (
     'edges.KNOWS\n'
-    'since source target\n'
-    '"2020" :person:1 :person:2\n'
-    '"2021" :person:10 :person:1\n'
+    'since source target weight\n'
+    '"2020" :person:1 :person:2 1.75\n'
+    '"2021" :person:10 :person:1 0.5\n'
     '\n'
     'edges.WORKS_AT\n'
     'role source target\n'
@@ -727,54 +727,62 @@ CANONICAL_GOLDEN_ISON = (
     '\n'
     'edges.WORKS_ON\n'
     'hours source target\n'
-    '"3" :person:10 :project:p1\n'
-    '"5" :person:2 :project:p1\n'
+    '3 :person:10 :project:p1\n'
+    '5 :person:2 :project:p1\n'
     '\n'
     'nodes.company\n'
-    'id name\n'
-    'acme "Acme Corp"\n'
+    'id listed name staff\n'
+    'acme false "Acme Corp" 42\n'
     '\n'
     'nodes.person\n'
-    'id age name\n'
-    '"1" "30" Alice\n'
-    '"10" "22" Jax\n'
-    '"2" "25" Bob\n'
+    'id active age name score\n'
+    '"1" true "30" Alice 9.5\n'
+    '"10" false "22" Jax -2.25\n'
+    '"2" null "25" Bob null\n'
     '\n'
     'nodes.project\n'
-    'id name tag\n'
-    'p1 Alpha a|b'
+    'id budget name tag\n'
+    'p1 1250 Alpha a|b'
 )
 
 CANONICAL_GOLDEN_ISONL = (
-    'edges.KNOWS|since source target|"2020" :person:1 :person:2\n'
-    'edges.KNOWS|since source target|"2021" :person:10 :person:1\n'
+    'edges.KNOWS|since source target weight|"2020" :person:1 :person:2 1.75\n'
+    'edges.KNOWS|since source target weight|"2021" :person:10 :person:1 0.5\n'
     'edges.WORKS_AT|role source target|"Lead Engineer" :person:1 :company:acme\n'
-    'edges.WORKS_ON|hours source target|"3" :person:10 :project:p1\n'
-    'edges.WORKS_ON|hours source target|"5" :person:2 :project:p1\n'
-    'nodes.company|id name|acme "Acme Corp"\n'
-    'nodes.person|id age name|"1" "30" Alice\n'
-    'nodes.person|id age name|"10" "22" Jax\n'
-    'nodes.person|id age name|"2" "25" Bob\n'
-    'nodes.project|id name tag|p1 Alpha "a\\|b"'
+    'edges.WORKS_ON|hours source target|3 :person:10 :project:p1\n'
+    'edges.WORKS_ON|hours source target|5 :person:2 :project:p1\n'
+    'nodes.company|id listed name staff|acme false "Acme Corp" 42\n'
+    'nodes.person|id active age name score|"1" true "30" Alice 9.5\n'
+    'nodes.person|id active age name score|"10" false "22" Jax -2.25\n'
+    'nodes.person|id active age name score|"2" null "25" Bob null\n'
+    'nodes.project|id budget name tag|p1 1250 Alpha "a\\|b"'
 )
 
 
 def _build_canonical_fixture(order):
     """Same logical graph built in forward (0) or reversed (1) insertion order."""
     graph = ISONGraph('fixture')
+    # Deliberately mixed types. The string ids '1'/'10'/'2' and the string
+    # ages '30'/'22'/'25' pin that a value which would reparse as a number
+    # stays quoted; the int, float and bool pin that a real number does not.
+    #
+    # No integral float appears here on purpose. JavaScript has one number
+    # type, so 1.0 === 1 and a JS program cannot originate a float 1.0 -
+    # putting one in a shared fixture would demand agreement no JS port can
+    # give. Non-integral floats carry the same signal and are portable.
     nodes = [
-        ('company', 'acme', {'name': 'Acme Corp'}),
-        ('person', '1', {'name': 'Alice', 'age': '30'}),
-        ('person', '10', {'name': 'Jax', 'age': '22'}),
+        ('company', 'acme', {'name': 'Acme Corp', 'staff': 42, 'listed': False}),
+        ('person', '1', {'name': 'Alice', 'age': '30', 'score': 9.5, 'active': True}),
+        ('person', '10', {'name': 'Jax', 'age': '22', 'score': -2.25, 'active': False}),
         ('person', '2', {'name': 'Bob', 'age': '25'}),
-        ('project', 'p1', {'name': 'Alpha', 'tag': 'a|b'}),
+        ('project', 'p1', {'name': 'Alpha', 'tag': 'a|b', 'budget': 1250}),
     ]
     edges = [
-        ('KNOWS', ('person', '10'), ('person', '1'), {'since': '2021'}),
-        ('KNOWS', ('person', '1'), ('person', '2'), {'since': '2020'}),
+        ('KNOWS', ('person', '10'), ('person', '1'), {'since': '2021', 'weight': 0.5}),
+        ('KNOWS', ('person', '1'), ('person', '2'), {'since': '2020', 'weight': 1.75}),
         ('WORKS_AT', ('person', '1'), ('company', 'acme'), {'role': 'Lead Engineer'}),
-        ('WORKS_ON', ('person', '2'), ('project', 'p1'), {'hours': '5'}),
-        ('WORKS_ON', ('person', '10'), ('project', 'p1'), {'hours': '3'}),
+        ('WORKS_ON', ('person', '2'), ('project', 'p1'), {'hours': 5}),
+        ('WORKS_ON', ('person', '10'), ('project', 'p1'), {'hours': 3}),
     ]
     seq_n = nodes if order == 0 else list(reversed(nodes))
     seq_e = edges if order == 0 else list(reversed(edges))

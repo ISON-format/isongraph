@@ -479,7 +479,9 @@ public:
             std::optional<std::string> value;
             auto it = node.properties.find(field_name);
             if (it != node.properties.end()) {
-                value = it->second;
+                // Validated against the rendered text so a schema accepts
+                // exactly what it did when properties were strings.
+                value = ison_graph::valueToText(it->second);
             }
 
             auto field_result = validator->validate(value, field_name);
@@ -596,7 +598,7 @@ public:
             std::optional<std::string> value;
             auto it = edge.properties.find(field_name);
             if (it != edge.properties.end()) {
-                value = it->second;
+                value = ison_graph::valueToText(it->second);
             }
 
             auto field_result = validator->validate(value, field_name);

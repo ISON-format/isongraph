@@ -842,7 +842,12 @@ impl NodeType {
 
         // Validate fields
         for (field_name, validator) in &self.fields {
-            let value = node.properties.get(field_name).map(|s| s.as_str());
+            // Rendered to text so validation behaves exactly as it did when
+            // properties were strings. Type-aware validation is a separate
+            // change; typing the storage should not silently alter what a
+            // schema accepts.
+            let rendered = node.properties.get(field_name).map(crate::value_to_text);
+            let value = rendered.as_deref();
             let field_result = validator.validate(value, field_name);
             if !field_result.is_valid() {
                 for mut err in field_result.errors {
@@ -1029,7 +1034,8 @@ impl EdgeType {
 
         // Validate fields
         for (field_name, validator) in &self.fields {
-            let value = edge.properties.get(field_name).map(|s| s.as_str());
+            let rendered = edge.properties.get(field_name).map(crate::value_to_text);
+            let value = rendered.as_deref();
             let field_result = validator.validate(value, field_name);
             if !field_result.is_valid() {
                 for mut err in field_result.errors {
@@ -1314,6 +1320,7 @@ impl GraphSchema {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Value;
 
     #[test]
     fn test_string_field_required() {
@@ -1358,14 +1365,14 @@ mod tests {
             .field("age", IntField::new().min(0).max(150));
 
         let mut node = Node::new("person", "1");
-        node.properties.insert("name".to_string(), "Alice".to_string());
-        node.properties.insert("age".to_string(), "30".to_string());
+        node.properties.insert("name".to_string(), Value::String("Alice".to_string()));
+        node.properties.insert("age".to_string(), Value::String("30".to_string()));
 
         let result = person.validate_node(&node);
         assert!(result.is_valid());
 
         let mut invalid_node = Node::new("person", "2");
-        invalid_node.properties.insert("age".to_string(), "200".to_string());
+        invalid_node.properties.insert("age".to_string(), Value::String("200".to_string()));
 
         let result = person.validate_node(&invalid_node);
         assert!(!result.is_valid());
@@ -1387,9 +1394,9 @@ mod tests {
             .edge_type(knows);
 
         let mut graph = ISONGraph::new("test");
-        graph.add_node("person", "1", vec![("name", "Alice")]).unwrap();
-        graph.add_node("person", "2", vec![("name", "Bob")]).unwrap();
-        graph.add_edge("KNOWS", ("person", "1"), ("person", "2"), vec![]).unwrap();
+        graph.add_node("person", "1", props![("name", "Alice")]).unwrap();
+        graph.add_node("person", "2", props![("name", "Bob")]).unwrap();
+        graph.add_edge("KNOWS", ("person", "1"), ("person", "2"), props![]).unwrap();
 
         let result = schema.validate(&graph);
         assert!(result.is_valid());
@@ -1406,8 +1413,8 @@ mod tests {
             .edge_type(knows);
 
         let mut graph = ISONGraph::new("test");
-        graph.add_node("person", "1", vec![]).unwrap();
-        graph.add_edge("KNOWS", ("person", "1"), ("person", "1"), vec![]).unwrap();
+        graph.add_node("person", "1", props![]).unwrap();
+        graph.add_edge("KNOWS", ("person", "1"), ("person", "1"), props![]).unwrap();
 
         let result = schema.validate(&graph);
         assert!(!result.is_valid());
@@ -1420,7 +1427,7 @@ mod tests {
             .no_orphans();
 
         let mut graph = ISONGraph::new("test");
-        graph.add_node("person", "1", vec![]).unwrap();
+        graph.add_node("person", "1", props![]).unwrap();
 
         let result = schema.validate(&graph);
         assert!(!result.is_valid());

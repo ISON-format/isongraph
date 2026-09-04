@@ -34,8 +34,8 @@ TEST(add_and_get_node) {
     const Node& node = graph.getNode("person", "1");
     assert(node.type == "person");
     assert(node.id == "1");
-    assert(node.properties.at("name") == "Alice");
-    assert(node.properties.at("age") == "30");
+    assert(ison_graph::valueToText(node.properties.at("name")) == "Alice");
+    assert(ison_graph::valueToText(node.properties.at("age")) == "30");
 }
 
 TEST(duplicate_node) {
@@ -88,8 +88,8 @@ TEST(update_node) {
     graph.updateNode("person", "1", {{"age", "31"}});
 
     const Node& node = graph.getNode("person", "1");
-    assert(node.properties.at("name") == "Alice");
-    assert(node.properties.at("age") == "31");
+    assert(ison_graph::valueToText(node.properties.at("name")) == "Alice");
+    assert(ison_graph::valueToText(node.properties.at("age")) == "31");
 }
 
 TEST(node_count) {
@@ -190,7 +190,7 @@ TEST(undirected_add_edge_returns_forward_edge) {
     assert(edge.source.id == "1");
     assert(edge.target.id == "2");
     assert(edge.relType == "KNOWS");
-    assert(edge.properties.at("since") == "2020");
+    assert(ison_graph::valueToText(edge.properties.at("since")) == "2020");
 
     // Both directions stored
     assert(graph.hasEdge("KNOWS", {"person", "1"}, {"person", "2"}));
@@ -506,7 +506,7 @@ TEST(fluent_filter) {
 
     auto result = GraphTraversal(graph, {"person", "1"})
         .hop("KNOWS")
-        .filter([](const Node& n) { return n.properties.at("name") == "Bob"; })
+        .filter([](const Node& n) { return ison_graph::valueToText(n.properties.at("name")) == "Bob"; })
         .collect();
 
     assert(result.size() == 1);
@@ -566,13 +566,13 @@ TEST(ison_roundtrip_special_values) {
     assert(restored.nodeCount() == 2);
     assert(restored.edgeCount() == 1);
     const Node& node = restored.getNode("person", "1");
-    assert(node.properties.at("name") == "Alice Smith");
-    assert(node.properties.at("bio") == "likes|pipes");
-    assert(node.properties.at("note") == "line1\nline2");
-    assert(node.properties.at("nick") == "");
-    assert(node.properties.at("quote") == "she said \"hi\"");
+    assert(ison_graph::valueToText(node.properties.at("name")) == "Alice Smith");
+    assert(ison_graph::valueToText(node.properties.at("bio")) == "likes|pipes");
+    assert(ison_graph::valueToText(node.properties.at("note")) == "line1\nline2");
+    assert(ison_graph::valueToText(node.properties.at("nick")) == "");
+    assert(ison_graph::valueToText(node.properties.at("quote")) == "she said \"hi\"");
     auto edge = restored.getEdge("KNOWS", {"person", "1"}, {"person", "2"});
-    assert(edge.properties.at("how") == "at a party");
+    assert(ison_graph::valueToText(edge.properties.at("how")) == "at a party");
 }
 
 TEST(isonl_roundtrip_special_values) {
@@ -590,13 +590,13 @@ TEST(isonl_roundtrip_special_values) {
     assert(restored.nodeCount() == 2);
     assert(restored.edgeCount() == 1);
     const Node& node = restored.getNode("person", "1");
-    assert(node.properties.at("name") == "Alice Smith");
-    assert(node.properties.at("bio") == "likes|pipes");
-    assert(node.properties.at("note") == "line1\nline2");
-    assert(node.properties.at("nick") == "");
+    assert(ison_graph::valueToText(node.properties.at("name")) == "Alice Smith");
+    assert(ison_graph::valueToText(node.properties.at("bio")) == "likes|pipes");
+    assert(ison_graph::valueToText(node.properties.at("note")) == "line1\nline2");
+    assert(ison_graph::valueToText(node.properties.at("nick")) == "");
     auto edge = restored.getEdge("KNOWS", {"person", "1"}, {"person", "2"});
-    assert(edge.properties.at("how") == "at a party");
-    assert(edge.properties.at("tag") == "a|b");
+    assert(ison_graph::valueToText(edge.properties.at("how")) == "at a party");
+    assert(ison_graph::valueToText(edge.properties.at("tag")) == "a|b");
 }
 
 TEST(from_ison_missing_id_column_throws) {
@@ -758,7 +758,7 @@ TEST(get_edge) {
 
     auto edge = graph.getEdge("KNOWS", {"person", "1"}, {"person", "2"});
     assert(edge.relType == "KNOWS");
-    assert(edge.properties.at("since") == "2020");
+    assert(ison_graph::valueToText(edge.properties.at("since")) == "2020");
 }
 
 // =============================================================================
@@ -811,7 +811,7 @@ TEST(collect_nodes) {
         .collectNodes();
 
     assert(nodes.size() == 1);
-    assert(nodes[0].properties.at("name") == "Bob");
+    assert(ison_graph::valueToText(nodes[0].properties.at("name")) == "Bob");
 }
 
 // =============================================================================
@@ -827,9 +827,9 @@ TEST(collect_nodes) {
 
 static const std::string CANONICAL_GOLDEN_ISON =
     "edges.KNOWS\n"
-    "since source target\n"
-    "\"2020\" :person:1 :person:2\n"
-    "\"2021\" :person:10 :person:1\n"
+    "since source target weight\n"
+    "\"2020\" :person:1 :person:2 1.75\n"
+    "\"2021\" :person:10 :person:1 0.5\n"
     "\n"
     "edges.WORKS_AT\n"
     "role source target\n"
@@ -837,50 +837,55 @@ static const std::string CANONICAL_GOLDEN_ISON =
     "\n"
     "edges.WORKS_ON\n"
     "hours source target\n"
-    "\"3\" :person:10 :project:p1\n"
-    "\"5\" :person:2 :project:p1\n"
+    "3 :person:10 :project:p1\n"
+    "5 :person:2 :project:p1\n"
     "\n"
     "nodes.company\n"
-    "id name\n"
-    "acme \"Acme Corp\"\n"
+    "id listed name staff\n"
+    "acme false \"Acme Corp\" 42\n"
     "\n"
     "nodes.person\n"
-    "id age name\n"
-    "\"1\" \"30\" Alice\n"
-    "\"10\" \"22\" Jax\n"
-    "\"2\" \"25\" Bob\n"
+    "id active age name score\n"
+    "\"1\" true \"30\" Alice 9.5\n"
+    "\"10\" false \"22\" Jax -2.25\n"
+    "\"2\" null \"25\" Bob null\n"
     "\n"
     "nodes.project\n"
-    "id name tag\n"
-    "p1 Alpha a|b";
+    "id budget name tag\n"
+    "p1 1250 Alpha a|b";
 
 static const std::string CANONICAL_GOLDEN_ISONL =
-    "edges.KNOWS|since source target|\"2020\" :person:1 :person:2\n"
-    "edges.KNOWS|since source target|\"2021\" :person:10 :person:1\n"
+    "edges.KNOWS|since source target weight|\"2020\" :person:1 :person:2 1.75\n"
+    "edges.KNOWS|since source target weight|\"2021\" :person:10 :person:1 0.5\n"
     "edges.WORKS_AT|role source target|\"Lead Engineer\" :person:1 :company:acme\n"
-    "edges.WORKS_ON|hours source target|\"3\" :person:10 :project:p1\n"
-    "edges.WORKS_ON|hours source target|\"5\" :person:2 :project:p1\n"
-    "nodes.company|id name|acme \"Acme Corp\"\n"
-    "nodes.person|id age name|\"1\" \"30\" Alice\n"
-    "nodes.person|id age name|\"10\" \"22\" Jax\n"
-    "nodes.person|id age name|\"2\" \"25\" Bob\n"
-    "nodes.project|id name tag|p1 Alpha \"a\\|b\"";
+    "edges.WORKS_ON|hours source target|3 :person:10 :project:p1\n"
+    "edges.WORKS_ON|hours source target|5 :person:2 :project:p1\n"
+    "nodes.company|id listed name staff|acme false \"Acme Corp\" 42\n"
+    "nodes.person|id active age name score|\"1\" true \"30\" Alice 9.5\n"
+    "nodes.person|id active age name score|\"10\" false \"22\" Jax -2.25\n"
+    "nodes.person|id active age name score|\"2\" null \"25\" Bob null\n"
+    "nodes.project|id budget name tag|p1 1250 Alpha \"a\\|b\"";
 
 static ISONGraph buildCanonicalFixture(int order) {
     ISONGraph g("fixture");
+    // Mixed types on purpose: the string ids and ages pin that a value which
+    // would reparse as a number stays quoted, the int, float and bool pin that
+    // a real number does not. No integral float - JavaScript cannot originate
+    // one, so a shared fixture must not ask for it.
+    using V = ison::Value;
     std::vector<std::tuple<std::string, std::string, Properties>> nodes = {
-        {"company", "acme", {{"name", "Acme Corp"}}},
-        {"person", "1", {{"name", "Alice"}, {"age", "30"}}},
-        {"person", "10", {{"name", "Jax"}, {"age", "22"}}},
-        {"person", "2", {{"name", "Bob"}, {"age", "25"}}},
-        {"project", "p1", {{"name", "Alpha"}, {"tag", "a|b"}}},
+        {"company", "acme", {{"name", V(std::string("Acme Corp"))}, {"staff", V(int64_t(42))}, {"listed", V(false)}}},
+        {"person", "1", {{"name", V(std::string("Alice"))}, {"age", V(std::string("30"))}, {"score", V(9.5)}, {"active", V(true)}}},
+        {"person", "10", {{"name", V(std::string("Jax"))}, {"age", V(std::string("22"))}, {"score", V(-2.25)}, {"active", V(false)}}},
+        {"person", "2", {{"name", V(std::string("Bob"))}, {"age", V(std::string("25"))}}},
+        {"project", "p1", {{"name", V(std::string("Alpha"))}, {"tag", V(std::string("a|b"))}, {"budget", V(int64_t(1250))}}},
     };
     std::vector<std::tuple<std::string, NodeRef, NodeRef, Properties>> edges = {
-        {"KNOWS", {"person", "10"}, {"person", "1"}, {{"since", "2021"}}},
-        {"KNOWS", {"person", "1"}, {"person", "2"}, {{"since", "2020"}}},
-        {"WORKS_AT", {"person", "1"}, {"company", "acme"}, {{"role", "Lead Engineer"}}},
-        {"WORKS_ON", {"person", "2"}, {"project", "p1"}, {{"hours", "5"}}},
-        {"WORKS_ON", {"person", "10"}, {"project", "p1"}, {{"hours", "3"}}},
+        {"KNOWS", {"person", "10"}, {"person", "1"}, {{"since", V(std::string("2021"))}, {"weight", V(0.5)}}},
+        {"KNOWS", {"person", "1"}, {"person", "2"}, {{"since", V(std::string("2020"))}, {"weight", V(1.75)}}},
+        {"WORKS_AT", {"person", "1"}, {"company", "acme"}, {{"role", V(std::string("Lead Engineer"))}}},
+        {"WORKS_ON", {"person", "2"}, {"project", "p1"}, {{"hours", V(int64_t(5))}}},
+        {"WORKS_ON", {"person", "10"}, {"project", "p1"}, {{"hours", V(int64_t(3))}}},
     };
     if (order != 0) {
         std::reverse(nodes.begin(), nodes.end());

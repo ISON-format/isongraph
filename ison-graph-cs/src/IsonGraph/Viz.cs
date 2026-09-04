@@ -298,7 +298,7 @@ public static class Viz
         return sb.ToString();
     }
 
-    private static string PropsJson(IReadOnlyDictionary<string, string> properties)
+    private static string PropsJson(IReadOnlyDictionary<string, object?> properties)
     {
         var sb = new StringBuilder("{");
         var first = true;
@@ -308,7 +308,7 @@ public static class Viz
                 sb.Append(", ");
             first = false;
             sb.Append('"').Append(JsonEscape(key)).Append("\": \"")
-              .Append(JsonEscape(value)).Append('"');
+              .Append(JsonEscape(PropertyValue.ValueText(value))).Append('"');
         }
         sb.Append('}');
         return sb.ToString();
@@ -340,10 +340,10 @@ public static class Viz
         if (labelProperty is not null &&
             node.Properties.TryGetValue(labelProperty, out var custom))
         {
-            return custom;
+            return PropertyValue.ValueText(custom);
         }
         if (node.Properties.TryGetValue("name", out var name))
-            return name;
+            return PropertyValue.ValueText(name);
         return node.Id;
     }
 

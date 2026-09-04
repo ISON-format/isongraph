@@ -6,12 +6,14 @@
 //! # Example
 //!
 //! ```rust
-//! use ison_graph::{ISONGraph, NodeRef, Direction};
+//! use ison_graph::{ISONGraph, NodeRef, Direction, props};
 //!
 //! let mut graph = ISONGraph::new("social");
-//! graph.add_node("person", "1", vec![("name", "Alice"), ("age", "30")]).unwrap();
-//! graph.add_node("person", "2", vec![("name", "Bob"), ("age", "25")]).unwrap();
-//! graph.add_edge("KNOWS", ("person", "1"), ("person", "2"), vec![("since", "2020")]).unwrap();
+//! // Properties keep their type: 30 is a number, "30" would be a string,
+//! // and the two serialize differently.
+//! graph.add_node("person", "1", props![("name", "Alice"), ("age", 30i64)]).unwrap();
+//! graph.add_node("person", "2", props![("name", "Bob"), ("age", 25i64)]).unwrap();
+//! graph.add_edge("KNOWS", ("person", "1"), ("person", "2"), props![("since", 2020i64)]).unwrap();
 //!
 //! let friends = graph.neighbors(&("person", "1"), Some("KNOWS"), Direction::Out);
 //! let fof = graph.multi_hop(&("person", "1"), Some("KNOWS"), 2, Direction::Out);
@@ -24,8 +26,72 @@ use std::sync::OnceLock;
 use ison_rs::{
     dumps_canonical, dumps_canonical_isonl, loads, loads_isonl,
     Block as IsonBlock, Document as IsonDocument, Reference as IsonReference,
-    Value as IsonValue,
 };
+
+/// Converts a Rust primitive into an ISON property value.
+///
+/// `ison_rs::Value` has no `From` impls and the orphan rule stops this crate
+/// adding them, so the conversions live here. This is sugar only - the value
+/// stored is always `ison_rs::Value`, never a parallel model.
+pub trait IntoValue {
+    fn into_value(self) -> Value;
+}
+
+impl IntoValue for Value {
+    fn into_value(self) -> Value { self }
+}
+impl IntoValue for &str {
+    fn into_value(self) -> Value { Value::String(self.to_string()) }
+}
+impl IntoValue for String {
+    fn into_value(self) -> Value { Value::String(self) }
+}
+impl IntoValue for i64 {
+    fn into_value(self) -> Value { Value::Int(self) }
+}
+impl IntoValue for i32 {
+    fn into_value(self) -> Value { Value::Int(self as i64) }
+}
+impl IntoValue for f64 {
+    fn into_value(self) -> Value { Value::Float(self) }
+}
+impl IntoValue for bool {
+    fn into_value(self) -> Value { Value::Bool(self) }
+}
+
+/// Build a property list with mixed value types.
+///
+/// A `Vec` is homogeneous, so a literal mixing an int and a string cannot be
+/// written directly; this converts each value before collecting, which is
+/// what makes `props![("staff", 42), ("name", "Acme")]` compile.
+#[macro_export]
+macro_rules! props {
+    () => { ::std::vec::Vec::<(&str, $crate::Value)>::new() };
+    ($(($k:expr, $v:expr)),* $(,)?) => {
+        ::std::vec![$(($k, $crate::IntoValue::into_value($v))),*]
+    };
+}
+
+/// Render a property value as text - the form every value had before
+/// properties carried types. Query string operators and schema validation
+/// use it so their behaviour is unchanged by typing the storage.
+pub fn value_to_text(value: &Value) -> String {
+    match value {
+        Value::Null => String::new(),
+        Value::Bool(b) => b.to_string(),
+        Value::Int(i) => i.to_string(),
+        Value::Float(f) => f.to_string(),
+        Value::String(s) => s.clone(),
+        Value::Reference(r) => r.to_ison(),
+    }
+}
+
+/// Property values are ISON values, re-exported so callers do not need a
+/// direct ison-rs dependency. Storing anything else would mean a second
+/// value model beside the parser's, which is what made this port emit every
+/// value as a quoted string and disagree with the typed ports.
+pub use ison_rs::Value;
+use ison_rs::Value as IsonValue;
 use thiserror::Error;
 use regex::Regex;
 
@@ -102,7 +168,7 @@ pub enum Direction {
 pub struct Node {
     pub node_type: String,
     pub id: String,
-    pub properties: HashMap<String, String>,
+    pub properties: HashMap<String, Value>,
 }
 
 impl Node {
@@ -114,9 +180,9 @@ impl Node {
         }
     }
 
-    pub fn with_properties(mut self, props: Vec<(&str, &str)>) -> Self {
+    pub fn with_properties(mut self, props: Vec<(&str, Value)>) -> Self {
         for (k, v) in props {
-            self.properties.insert(k.to_string(), v.to_string());
+            self.properties.insert(k.to_string(), v);
         }
         self
     }
@@ -137,7 +203,7 @@ pub struct Edge {
     pub rel_type: String,
     pub source: NodeId,
     pub target: NodeId,
-    pub properties: HashMap<String, String>,
+    pub properties: HashMap<String, Value>,
 }
 
 impl Edge {
@@ -150,9 +216,9 @@ impl Edge {
         }
     }
 
-    pub fn with_properties(mut self, props: Vec<(&str, &str)>) -> Self {
+    pub fn with_properties(mut self, props: Vec<(&str, Value)>) -> Self {
         for (k, v) in props {
-            self.properties.insert(k.to_string(), v.to_string());
+            self.properties.insert(k.to_string(), v);
         }
         self
     }
@@ -450,7 +516,7 @@ impl ISONGraph {
         &mut self,
         node_type: &str,
         node_id: &str,
-        properties: Vec<(&str, &str)>,
+        properties: Vec<(&str, Value)>,
     ) -> Result<&Node> {
         Self::check_identifier("Node type", node_type)?;
         Self::check_identifier("Node id", node_id)?;
@@ -526,7 +592,7 @@ impl ISONGraph {
         &mut self,
         node_type: &str,
         node_id: &str,
-        properties: Vec<(&str, &str)>,
+        properties: Vec<(&str, Value)>,
     ) -> Result<()> {
         let node = self
             .nodes
@@ -535,7 +601,7 @@ impl ISONGraph {
             .ok_or_else(|| GraphError::NodeNotFound(node_type.to_string(), node_id.to_string()))?;
 
         for (k, v) in properties {
-            node.properties.insert(k.to_string(), v.to_string());
+            node.properties.insert(k.to_string(), v);
         }
         Ok(())
     }
@@ -578,7 +644,7 @@ impl ISONGraph {
         rel_type: &str,
         source: (&str, &str),
         target: (&str, &str),
-        properties: Vec<(&str, &str)>,
+        properties: Vec<(&str, Value)>,
     ) -> Result<()> {
         Self::check_identifier("Relationship type", rel_type)?;
         Self::check_property_names("Edge property", properties.iter().map(|(k, _)| *k))?;
@@ -1210,7 +1276,7 @@ impl ISONGraph {
                 row.insert("id".to_string(), IsonValue::String(node.id.clone()));
                 for key in &prop_keys {
                     let value = match node.properties.get(*key) {
-                        Some(v) => IsonValue::String(v.clone()),
+                        Some(v) => v.clone(),
                         None => IsonValue::Null,
                     };
                     row.insert((*key).clone(), value);
@@ -1260,7 +1326,7 @@ impl ISONGraph {
                 );
                 for key in &prop_keys {
                     let value = match edge.properties.get(*key) {
-                        Some(v) => IsonValue::String(v.clone()),
+                        Some(v) => v.clone(),
                         None => IsonValue::Null,
                     };
                     row.insert((*key).clone(), value);
@@ -1287,7 +1353,10 @@ impl ISONGraph {
         dumps_canonical_isonl(&self.document()).unwrap_or_default()
     }
 
-    fn value_text(value: &IsonValue) -> Option<String> {
+
+    /// Node ids are identifiers rather than values, so they are always text.
+    /// Property values keep whatever type the parser produced.
+    fn id_text(value: &IsonValue) -> Option<String> {
         match value {
             IsonValue::Null => None,
             IsonValue::Bool(b) => Some(b.to_string()),
@@ -1317,17 +1386,19 @@ impl ISONGraph {
                 continue;
             }
             for row in &block.rows {
+                // The id is an identifier, not a property, so it stays text;
+                // everything else keeps the type the parser gave it.
                 let id = row
                     .get("id")
-                    .and_then(Self::value_text)
+                    .and_then(Self::id_text)
                     .ok_or_else(|| GraphError::ParseError("row has no id".into()))?;
-                let props: Vec<(String, String)> = row
+                let props: Vec<(String, Value)> = row
                     .iter()
                     .filter(|(k, _)| k.as_str() != "id")
-                    .filter_map(|(k, v)| Self::value_text(v).map(|t| (k.clone(), t)))
+                    .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
-                let borrowed: Vec<(&str, &str)> =
-                    props.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+                let borrowed: Vec<(&str, Value)> =
+                    props.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
                 graph.add_node(&block.name, &id, borrowed)?;
             }
         }
@@ -1348,13 +1419,13 @@ impl ISONGraph {
                         ))
                     }
                 };
-                let props: Vec<(String, String)> = row
+                let props: Vec<(String, Value)> = row
                     .iter()
                     .filter(|(k, _)| k.as_str() != "source" && k.as_str() != "target")
-                    .filter_map(|(k, v)| Self::value_text(v).map(|t| (k.clone(), t)))
+                    .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
-                let borrowed: Vec<(&str, &str)> =
-                    props.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+                let borrowed: Vec<(&str, Value)> =
+                    props.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
                 graph.add_edge(
                     &block.name,
                     (&source.0, &source.1),
@@ -1873,31 +1944,31 @@ mod tests {
     fn test_add_and_get_node() {
         let mut graph = ISONGraph::new("test");
         graph
-            .add_node("person", "1", vec![("name", "Alice"), ("age", "30")])
+            .add_node("person", "1", props![("name", "Alice"), ("age", "30")])
             .unwrap();
 
         let node = graph.get_node("person", "1").unwrap();
         assert_eq!(node.node_type, "person");
         assert_eq!(node.id, "1");
-        assert_eq!(node.properties.get("name").unwrap(), "Alice");
+        assert_eq!(crate::value_to_text(node.properties.get("name").unwrap()), "Alice");
     }
 
     #[test]
     fn test_duplicate_node() {
         let mut graph = ISONGraph::new("test");
-        graph.add_node("person", "1", vec![]).unwrap();
-        assert!(graph.add_node("person", "1", vec![]).is_err());
+        graph.add_node("person", "1", props![]).unwrap();
+        assert!(graph.add_node("person", "1", props![]).is_err());
     }
 
     #[test]
     fn test_add_node_rejects_colon() {
         let mut graph = ISONGraph::new("test");
         assert!(matches!(
-            graph.add_node("per:son", "1", vec![]),
+            graph.add_node("per:son", "1", props![]),
             Err(GraphError::InvalidIdentifier(_))
         ));
         assert!(matches!(
-            graph.add_node("person", "1:2", vec![]),
+            graph.add_node("person", "1:2", props![]),
             Err(GraphError::InvalidIdentifier(_))
         ));
         assert_eq!(graph.node_count(), 0);
@@ -1911,11 +1982,11 @@ mod tests {
     fn test_add_node_rejects_pipe() {
         let mut graph = ISONGraph::new("test");
         assert!(matches!(
-            graph.add_node("per|son", "1", vec![]),
+            graph.add_node("per|son", "1", props![]),
             Err(GraphError::InvalidIdentifier(_))
         ));
         assert!(matches!(
-            graph.add_node("person", "1|2", vec![]),
+            graph.add_node("person", "1|2", props![]),
             Err(GraphError::InvalidIdentifier(_))
         ));
         assert_eq!(graph.node_count(), 0);
@@ -1924,14 +1995,14 @@ mod tests {
     #[test]
     fn test_add_edge_rejects_colon_and_pipe_in_rel_type() {
         let mut graph = ISONGraph::new("test");
-        graph.add_node("person", "1", vec![]).unwrap();
-        graph.add_node("person", "2", vec![]).unwrap();
+        graph.add_node("person", "1", props![]).unwrap();
+        graph.add_node("person", "2", props![]).unwrap();
         assert!(matches!(
-            graph.add_edge("KN:OWS", ("person", "1"), ("person", "2"), vec![]),
+            graph.add_edge("KN:OWS", ("person", "1"), ("person", "2"), props![]),
             Err(GraphError::InvalidIdentifier(_))
         ));
         assert!(matches!(
-            graph.add_edge("KN|OWS", ("person", "1"), ("person", "2"), vec![]),
+            graph.add_edge("KN|OWS", ("person", "1"), ("person", "2"), props![]),
             Err(GraphError::InvalidIdentifier(_))
         ));
         assert_eq!(graph.edge_count(), 0);
@@ -1944,25 +2015,25 @@ mod tests {
         // reparses as two values. Rejected at construction instead.
         for bad in ["a b", "a\tb", "a\nb", ""] {
             let mut graph = ISONGraph::new("test");
-            assert!(graph.add_node(bad, "1", vec![]).is_err(), "type {:?}", bad);
-            assert!(graph.add_node("p", bad, vec![]).is_err(), "id {:?}", bad);
+            assert!(graph.add_node(bad, "1", props![]).is_err(), "type {:?}", bad);
+            assert!(graph.add_node("p", bad, props![]).is_err(), "id {:?}", bad);
         }
 
         // ISONL cannot quote a block name, so types are stricter than ids.
         for bad in ["a\"b", "a\\b"] {
             let mut graph = ISONGraph::new("test");
-            assert!(graph.add_node(bad, "1", vec![]).is_err(), "type {:?}", bad);
-            assert!(graph.add_node("p", bad, vec![]).is_ok(), "id {:?}", bad);
+            assert!(graph.add_node(bad, "1", props![]).is_err(), "type {:?}", bad);
+            assert!(graph.add_node("p", bad, props![]).is_ok(), "id {:?}", bad);
         }
     }
 
     #[test]
     fn test_valid_identifiers_still_allowed() {
         let mut graph = ISONGraph::new("test");
-        graph.add_node("a-type", "an-id-1", vec![]).unwrap();
-        graph.add_node("b.c", "#2", vec![]).unwrap();
+        graph.add_node("a-type", "an-id-1", props![]).unwrap();
+        graph.add_node("b.c", "#2", props![]).unwrap();
         graph
-            .add_edge("SHARES_BORDER_WITH", ("a-type", "an-id-1"), ("b.c", "#2"), vec![])
+            .add_edge("SHARES_BORDER_WITH", ("a-type", "an-id-1"), ("b.c", "#2"), props![])
             .unwrap();
         assert_eq!(graph.edge_count(), 1);
 
@@ -1976,13 +2047,13 @@ mod tests {
         // Previously: add_node("a:b", "1") succeeded, then to_ison() ->
         // from_ison() raised NodeNotFound - the actual bug this closes.
         let mut graph = ISONGraph::new("test");
-        assert!(graph.add_node("a:b", "1", vec![]).is_err());
+        assert!(graph.add_node("a:b", "1", props![]).is_err());
     }
 
     #[test]
     fn test_no_longer_crashes_on_isonl_roundtrip() {
         let mut graph = ISONGraph::new("test");
-        assert!(graph.add_node("rel|type", "1", vec![]).is_err());
+        assert!(graph.add_node("rel|type", "1", props![]).is_err());
     }
 
     #[cfg(feature = "serde")]
@@ -2005,10 +2076,10 @@ mod tests {
     #[test]
     fn test_add_and_has_edge() {
         let mut graph = ISONGraph::new("test");
-        graph.add_node("person", "1", vec![]).unwrap();
-        graph.add_node("person", "2", vec![]).unwrap();
+        graph.add_node("person", "1", props![]).unwrap();
+        graph.add_node("person", "2", props![]).unwrap();
         graph
-            .add_edge("KNOWS", ("person", "1"), ("person", "2"), vec![])
+            .add_edge("KNOWS", ("person", "1"), ("person", "2"), props![])
             .unwrap();
 
         assert!(graph.has_edge("KNOWS", ("person", "1"), ("person", "2")));
@@ -2018,14 +2089,14 @@ mod tests {
     #[test]
     fn test_neighbors() {
         let mut graph = ISONGraph::new("test");
-        graph.add_node("person", "1", vec![]).unwrap();
-        graph.add_node("person", "2", vec![]).unwrap();
-        graph.add_node("person", "3", vec![]).unwrap();
+        graph.add_node("person", "1", props![]).unwrap();
+        graph.add_node("person", "2", props![]).unwrap();
+        graph.add_node("person", "3", props![]).unwrap();
         graph
-            .add_edge("KNOWS", ("person", "1"), ("person", "2"), vec![])
+            .add_edge("KNOWS", ("person", "1"), ("person", "2"), props![])
             .unwrap();
         graph
-            .add_edge("KNOWS", ("person", "1"), ("person", "3"), vec![])
+            .add_edge("KNOWS", ("person", "1"), ("person", "3"), props![])
             .unwrap();
 
         let friends = graph.neighbors(&("person", "1"), Some("KNOWS"), Direction::Out);
@@ -2035,14 +2106,14 @@ mod tests {
     #[test]
     fn test_multi_hop() {
         let mut graph = ISONGraph::new("test");
-        graph.add_node("person", "1", vec![]).unwrap();
-        graph.add_node("person", "2", vec![]).unwrap();
-        graph.add_node("person", "3", vec![]).unwrap();
+        graph.add_node("person", "1", props![]).unwrap();
+        graph.add_node("person", "2", props![]).unwrap();
+        graph.add_node("person", "3", props![]).unwrap();
         graph
-            .add_edge("KNOWS", ("person", "1"), ("person", "2"), vec![])
+            .add_edge("KNOWS", ("person", "1"), ("person", "2"), props![])
             .unwrap();
         graph
-            .add_edge("KNOWS", ("person", "2"), ("person", "3"), vec![])
+            .add_edge("KNOWS", ("person", "2"), ("person", "3"), props![])
             .unwrap();
 
         let two_hops = graph.multi_hop(&("person", "1"), Some("KNOWS"), 2, Direction::Out);
@@ -2053,14 +2124,14 @@ mod tests {
     #[test]
     fn test_shortest_path() {
         let mut graph = ISONGraph::new("test");
-        graph.add_node("person", "1", vec![]).unwrap();
-        graph.add_node("person", "2", vec![]).unwrap();
-        graph.add_node("person", "3", vec![]).unwrap();
+        graph.add_node("person", "1", props![]).unwrap();
+        graph.add_node("person", "2", props![]).unwrap();
+        graph.add_node("person", "3", props![]).unwrap();
         graph
-            .add_edge("KNOWS", ("person", "1"), ("person", "2"), vec![])
+            .add_edge("KNOWS", ("person", "1"), ("person", "2"), props![])
             .unwrap();
         graph
-            .add_edge("KNOWS", ("person", "2"), ("person", "3"), vec![])
+            .add_edge("KNOWS", ("person", "2"), ("person", "3"), props![])
             .unwrap();
 
         let path = graph
@@ -2073,9 +2144,9 @@ mod tests {
     #[test]
     fn test_node_count() {
         let mut graph = ISONGraph::new("test");
-        graph.add_node("person", "1", vec![]).unwrap();
-        graph.add_node("person", "2", vec![]).unwrap();
-        graph.add_node("company", "100", vec![]).unwrap();
+        graph.add_node("person", "1", props![]).unwrap();
+        graph.add_node("person", "2", props![]).unwrap();
+        graph.add_node("company", "100", props![]).unwrap();
 
         assert_eq!(graph.node_count(), 3);
         assert_eq!(graph.node_count_of_type("person"), 2);
@@ -2086,13 +2157,13 @@ mod tests {
     fn test_to_ison() {
         let mut graph = ISONGraph::new("test");
         graph
-            .add_node("person", "1", vec![("name", "Alice")])
+            .add_node("person", "1", props![("name", "Alice")])
             .unwrap();
         graph
-            .add_node("person", "2", vec![("name", "Bob")])
+            .add_node("person", "2", props![("name", "Bob")])
             .unwrap();
         graph
-            .add_edge("KNOWS", ("person", "1"), ("person", "2"), vec![])
+            .add_edge("KNOWS", ("person", "1"), ("person", "2"), props![])
             .unwrap();
 
         let ison = graph.to_ison();
@@ -2107,7 +2178,7 @@ mod tests {
             .add_node(
                 "person",
                 "1",
-                vec![
+                props![
                     ("name", "Alice Smith"),
                     ("bio", "a|b"),
                     ("note", "line1\nline2"),
@@ -2119,7 +2190,7 @@ mod tests {
             .add_node(
                 "person",
                 "2",
-                vec![
+                props![
                     ("name", "Bob"),
                     ("bio", "he said \"hi\""),
                     ("note", "x"),
@@ -2132,7 +2203,7 @@ mod tests {
                 "KNOWS",
                 ("person", "1"),
                 ("person", "2"),
-                vec![("where", "New York"), ("tag", "")],
+                props![("where", "New York"), ("tag", "")],
             )
             .unwrap();
         graph
@@ -2142,17 +2213,17 @@ mod tests {
         assert_eq!(restored.node_count(), 2);
         assert_eq!(restored.edge_count(), 1);
         let n1 = restored.get_node("person", "1").unwrap();
-        assert_eq!(n1.properties.get("name").unwrap(), "Alice Smith");
-        assert_eq!(n1.properties.get("bio").unwrap(), "a|b");
-        assert_eq!(n1.properties.get("note").unwrap(), "line1\nline2");
-        assert_eq!(n1.properties.get("empty").unwrap(), "");
+        assert_eq!(crate::value_to_text(n1.properties.get("name").unwrap()), "Alice Smith");
+        assert_eq!(crate::value_to_text(n1.properties.get("bio").unwrap()), "a|b");
+        assert_eq!(crate::value_to_text(n1.properties.get("note").unwrap()), "line1\nline2");
+        assert_eq!(crate::value_to_text(n1.properties.get("empty").unwrap()), "");
         let n2 = restored.get_node("person", "2").unwrap();
-        assert_eq!(n2.properties.get("bio").unwrap(), "he said \"hi\"");
+        assert_eq!(crate::value_to_text(n2.properties.get("bio").unwrap()), "he said \"hi\"");
         let e = restored
             .get_edge("KNOWS", ("person", "1"), ("person", "2"))
             .unwrap();
-        assert_eq!(e.properties.get("where").unwrap(), "New York");
-        assert_eq!(e.properties.get("tag").unwrap(), "");
+        assert_eq!(crate::value_to_text(e.properties.get("where").unwrap()), "New York");
+        assert_eq!(crate::value_to_text(e.properties.get("tag").unwrap()), "");
     }
 
     #[test]
@@ -2172,15 +2243,15 @@ mod tests {
     #[test]
     fn test_is_connected() {
         let mut graph = ISONGraph::new("test");
-        graph.add_node("person", "1", vec![]).unwrap();
-        graph.add_node("person", "2", vec![]).unwrap();
+        graph.add_node("person", "1", props![]).unwrap();
+        graph.add_node("person", "2", props![]).unwrap();
         graph
-            .add_edge("KNOWS", ("person", "1"), ("person", "2"), vec![])
+            .add_edge("KNOWS", ("person", "1"), ("person", "2"), props![])
             .unwrap();
 
         assert!(graph.is_connected());
 
-        graph.add_node("person", "3", vec![]).unwrap();
+        graph.add_node("person", "3", props![]).unwrap();
         assert!(!graph.is_connected());
     }
 
@@ -2272,12 +2343,12 @@ source target since
     #[test]
     fn test_connected_components() {
         let mut graph = ISONGraph::new("test");
-        graph.add_node("person", "1", vec![]).unwrap();
-        graph.add_node("person", "2", vec![]).unwrap();
-        graph.add_node("person", "3", vec![]).unwrap();
-        graph.add_node("person", "4", vec![]).unwrap();
-        graph.add_edge("KNOWS", ("person", "1"), ("person", "2"), vec![]).unwrap();
-        graph.add_edge("KNOWS", ("person", "3"), ("person", "4"), vec![]).unwrap();
+        graph.add_node("person", "1", props![]).unwrap();
+        graph.add_node("person", "2", props![]).unwrap();
+        graph.add_node("person", "3", props![]).unwrap();
+        graph.add_node("person", "4", props![]).unwrap();
+        graph.add_edge("KNOWS", ("person", "1"), ("person", "2"), props![]).unwrap();
+        graph.add_edge("KNOWS", ("person", "3"), ("person", "4"), props![]).unwrap();
 
         let components = graph.connected_components();
         assert_eq!(components.len(), 2);
@@ -2286,12 +2357,12 @@ source target since
     #[test]
     fn test_all_paths() {
         let mut graph = ISONGraph::new("test");
-        graph.add_node("person", "1", vec![]).unwrap();
-        graph.add_node("person", "2", vec![]).unwrap();
-        graph.add_node("person", "3", vec![]).unwrap();
-        graph.add_edge("KNOWS", ("person", "1"), ("person", "2"), vec![]).unwrap();
-        graph.add_edge("KNOWS", ("person", "2"), ("person", "3"), vec![]).unwrap();
-        graph.add_edge("KNOWS", ("person", "1"), ("person", "3"), vec![]).unwrap();
+        graph.add_node("person", "1", props![]).unwrap();
+        graph.add_node("person", "2", props![]).unwrap();
+        graph.add_node("person", "3", props![]).unwrap();
+        graph.add_edge("KNOWS", ("person", "1"), ("person", "2"), props![]).unwrap();
+        graph.add_edge("KNOWS", ("person", "2"), ("person", "3"), props![]).unwrap();
+        graph.add_edge("KNOWS", ("person", "1"), ("person", "3"), props![]).unwrap();
 
         let paths = graph.all_paths(&("person", "1"), &("person", "3"), None, 5, Direction::Out);
         assert_eq!(paths.len(), 2); // Direct path and via person 2
@@ -2300,13 +2371,13 @@ source target since
     #[test]
     fn test_get_edge() {
         let mut graph = ISONGraph::new("test");
-        graph.add_node("person", "1", vec![]).unwrap();
-        graph.add_node("person", "2", vec![]).unwrap();
-        graph.add_edge("KNOWS", ("person", "1"), ("person", "2"), vec![("since", "2020")]).unwrap();
+        graph.add_node("person", "1", props![]).unwrap();
+        graph.add_node("person", "2", props![]).unwrap();
+        graph.add_edge("KNOWS", ("person", "1"), ("person", "2"), props![("since", "2020")]).unwrap();
 
         let edge = graph.get_edge("KNOWS", ("person", "1"), ("person", "2")).unwrap();
         assert_eq!(edge.rel_type, "KNOWS");
-        assert_eq!(edge.properties.get("since").unwrap(), "2020");
+        assert_eq!(crate::value_to_text(edge.properties.get("since").unwrap()), "2020");
     }
 
     // =========================================================================
@@ -2316,11 +2387,11 @@ source target since
     #[test]
     fn test_query_pattern() {
         let mut graph = ISONGraph::new("test");
-        graph.add_node("person", "1", vec![]).unwrap();
-        graph.add_node("person", "2", vec![]).unwrap();
-        graph.add_node("person", "3", vec![]).unwrap();
-        graph.add_edge("KNOWS", ("person", "1"), ("person", "2"), vec![]).unwrap();
-        graph.add_edge("KNOWS", ("person", "2"), ("person", "3"), vec![]).unwrap();
+        graph.add_node("person", "1", props![]).unwrap();
+        graph.add_node("person", "2", props![]).unwrap();
+        graph.add_node("person", "3", props![]).unwrap();
+        graph.add_edge("KNOWS", ("person", "1"), ("person", "2"), props![]).unwrap();
+        graph.add_edge("KNOWS", ("person", "2"), ("person", "3"), props![]).unwrap();
 
         let result = graph.query(":person:1 -[:KNOWS]-> *").unwrap();
         assert_eq!(result.len(), 1);
@@ -2338,9 +2409,9 @@ source target since
     #[test]
     fn test_start_method() {
         let mut graph = ISONGraph::new("test");
-        graph.add_node("person", "1", vec![("name", "Alice")]).unwrap();
-        graph.add_node("person", "2", vec![("name", "Bob")]).unwrap();
-        graph.add_edge("KNOWS", ("person", "1"), ("person", "2"), vec![]).unwrap();
+        graph.add_node("person", "1", props![("name", "Alice")]).unwrap();
+        graph.add_node("person", "2", props![("name", "Bob")]).unwrap();
+        graph.add_edge("KNOWS", ("person", "1"), ("person", "2"), props![]).unwrap();
 
         let result = graph.start(&("person", "1"))
             .hop(Some("KNOWS"), Direction::Out)
@@ -2353,30 +2424,30 @@ source target since
     #[test]
     fn test_fluent_collect_nodes() {
         let mut graph = ISONGraph::new("test");
-        graph.add_node("person", "1", vec![("name", "Alice")]).unwrap();
-        graph.add_node("person", "2", vec![("name", "Bob")]).unwrap();
-        graph.add_edge("KNOWS", ("person", "1"), ("person", "2"), vec![]).unwrap();
+        graph.add_node("person", "1", props![("name", "Alice")]).unwrap();
+        graph.add_node("person", "2", props![("name", "Bob")]).unwrap();
+        graph.add_edge("KNOWS", ("person", "1"), ("person", "2"), props![]).unwrap();
 
         let nodes = graph.start(&("person", "1"))
             .hop(Some("KNOWS"), Direction::Out)
             .collect_nodes();
 
         assert_eq!(nodes.len(), 1);
-        assert_eq!(nodes[0].properties.get("name").unwrap(), "Bob");
+        assert_eq!(crate::value_to_text(nodes[0].properties.get("name").unwrap()), "Bob");
     }
 
     #[test]
     fn test_fluent_filter() {
         let mut graph = ISONGraph::new("test");
-        graph.add_node("person", "1", vec![("name", "Alice")]).unwrap();
-        graph.add_node("person", "2", vec![("name", "Bob")]).unwrap();
-        graph.add_node("person", "3", vec![("name", "Charlie")]).unwrap();
-        graph.add_edge("KNOWS", ("person", "1"), ("person", "2"), vec![]).unwrap();
-        graph.add_edge("KNOWS", ("person", "1"), ("person", "3"), vec![]).unwrap();
+        graph.add_node("person", "1", props![("name", "Alice")]).unwrap();
+        graph.add_node("person", "2", props![("name", "Bob")]).unwrap();
+        graph.add_node("person", "3", props![("name", "Charlie")]).unwrap();
+        graph.add_edge("KNOWS", ("person", "1"), ("person", "2"), props![]).unwrap();
+        graph.add_edge("KNOWS", ("person", "1"), ("person", "3"), props![]).unwrap();
 
         let result = graph.start(&("person", "1"))
             .hop(Some("KNOWS"), Direction::Out)
-            .filter(|n| n.properties.get("name").map(|s| s == "Bob").unwrap_or(false))
+            .filter(|n| n.properties.get("name").map(|v| crate::value_to_text(v) == "Bob").unwrap_or(false))
             .collect();
 
         assert_eq!(result.len(), 1);
@@ -2390,24 +2461,24 @@ source target since
     #[test]
     fn test_undirected_single_edge_no_cycle() {
         let mut graph = ISONGraph::undirected("test");
-        graph.add_node("person", "1", vec![]).unwrap();
-        graph.add_node("person", "2", vec![]).unwrap();
+        graph.add_node("person", "1", props![]).unwrap();
+        graph.add_node("person", "2", props![]).unwrap();
         graph
-            .add_edge("KNOWS", ("person", "1"), ("person", "2"), vec![])
+            .add_edge("KNOWS", ("person", "1"), ("person", "2"), props![])
             .unwrap();
         // A single undirected edge must not be reported as a cycle
         assert!(!graph.has_cycle(None));
 
         // A chain of two undirected edges is still acyclic
-        graph.add_node("person", "3", vec![]).unwrap();
+        graph.add_node("person", "3", props![]).unwrap();
         graph
-            .add_edge("KNOWS", ("person", "2"), ("person", "3"), vec![])
+            .add_edge("KNOWS", ("person", "2"), ("person", "3"), props![])
             .unwrap();
         assert!(!graph.has_cycle(None));
 
         // Closing the triangle creates a real cycle
         graph
-            .add_edge("KNOWS", ("person", "3"), ("person", "1"), vec![])
+            .add_edge("KNOWS", ("person", "3"), ("person", "1"), props![])
             .unwrap();
         assert!(graph.has_cycle(None));
     }
@@ -2415,11 +2486,11 @@ source target since
     #[test]
     fn test_directed_cycle_detection() {
         let mut graph = ISONGraph::new("test");
-        graph.add_node("t", "a", vec![]).unwrap();
-        graph.add_node("t", "b", vec![]).unwrap();
-        graph.add_edge("R", ("t", "a"), ("t", "b"), vec![]).unwrap();
+        graph.add_node("t", "a", props![]).unwrap();
+        graph.add_node("t", "b", props![]).unwrap();
+        graph.add_edge("R", ("t", "a"), ("t", "b"), props![]).unwrap();
         assert!(!graph.has_cycle(None));
-        graph.add_edge("R", ("t", "b"), ("t", "a"), vec![]).unwrap();
+        graph.add_edge("R", ("t", "b"), ("t", "a"), props![]).unwrap();
         assert!(graph.has_cycle(None));
         // Filtering on a rel type with no cycle
         assert!(!graph.has_cycle(Some("OTHER")));
@@ -2428,10 +2499,10 @@ source target since
     #[test]
     fn test_neighbors_both_undirected_dedup() {
         let mut graph = ISONGraph::undirected("test");
-        graph.add_node("person", "1", vec![]).unwrap();
-        graph.add_node("person", "2", vec![]).unwrap();
+        graph.add_node("person", "1", props![]).unwrap();
+        graph.add_node("person", "2", props![]).unwrap();
         graph
-            .add_edge("KNOWS", ("person", "1"), ("person", "2"), vec![])
+            .add_edge("KNOWS", ("person", "1"), ("person", "2"), props![])
             .unwrap();
 
         let neighbors = graph.neighbors(&("person", "1"), None, Direction::Both);
@@ -2442,10 +2513,10 @@ source target since
     #[test]
     fn test_path_exists_direction() {
         let mut graph = ISONGraph::new("test");
-        graph.add_node("person", "1", vec![]).unwrap();
-        graph.add_node("person", "2", vec![]).unwrap();
+        graph.add_node("person", "1", props![]).unwrap();
+        graph.add_node("person", "2", props![]).unwrap();
         graph
-            .add_edge("KNOWS", ("person", "1"), ("person", "2"), vec![])
+            .add_edge("KNOWS", ("person", "1"), ("person", "2"), props![])
             .unwrap();
 
         assert!(graph.path_exists(&("person", "1"), &("person", "2"), None, 5, Direction::Out));
@@ -2457,10 +2528,10 @@ source target since
     #[test]
     fn test_max_hops_usize_max_no_overflow() {
         let mut graph = ISONGraph::new("test");
-        graph.add_node("person", "1", vec![]).unwrap();
-        graph.add_node("person", "2", vec![]).unwrap();
+        graph.add_node("person", "1", props![]).unwrap();
+        graph.add_node("person", "2", props![]).unwrap();
         graph
-            .add_edge("KNOWS", ("person", "1"), ("person", "2"), vec![])
+            .add_edge("KNOWS", ("person", "1"), ("person", "2"), props![])
             .unwrap();
 
         assert!(graph.path_exists(
@@ -2477,7 +2548,7 @@ source target since
     #[test]
     fn test_all_paths_start_equals_end() {
         let mut graph = ISONGraph::new("test");
-        graph.add_node("person", "1", vec![]).unwrap();
+        graph.add_node("person", "1", props![]).unwrap();
         let paths = graph.all_paths(&("person", "1"), &("person", "1"), None, 5, Direction::Out);
         assert_eq!(paths.len(), 1);
         assert_eq!(paths[0].length(), 0);
@@ -2492,13 +2563,13 @@ source target since
     fn test_serde_round_trip() {
         let mut graph = ISONGraph::new("test");
         graph
-            .add_node("person", "1", vec![("name", "Alice")])
+            .add_node("person", "1", props![("name", "Alice")])
             .unwrap();
         graph
-            .add_node("person", "2", vec![("name", "Bob")])
+            .add_node("person", "2", props![("name", "Bob")])
             .unwrap();
         graph
-            .add_edge("KNOWS", ("person", "1"), ("person", "2"), vec![("since", "2020")])
+            .add_edge("KNOWS", ("person", "1"), ("person", "2"), props![("since", "2020")])
             .unwrap();
 
         let json = serde_json::to_string(&graph).unwrap();
@@ -2523,11 +2594,11 @@ source target since
     #[test]
     fn test_fluent_hops() {
         let mut graph = ISONGraph::new("test");
-        graph.add_node("person", "1", vec![]).unwrap();
-        graph.add_node("person", "2", vec![]).unwrap();
-        graph.add_node("person", "3", vec![]).unwrap();
-        graph.add_edge("KNOWS", ("person", "1"), ("person", "2"), vec![]).unwrap();
-        graph.add_edge("KNOWS", ("person", "2"), ("person", "3"), vec![]).unwrap();
+        graph.add_node("person", "1", props![]).unwrap();
+        graph.add_node("person", "2", props![]).unwrap();
+        graph.add_node("person", "3", props![]).unwrap();
+        graph.add_edge("KNOWS", ("person", "1"), ("person", "2"), props![]).unwrap();
+        graph.add_edge("KNOWS", ("person", "2"), ("person", "3"), props![]).unwrap();
 
         let count = graph.start(&("person", "1"))
             .hops(2, Some("KNOWS"), Direction::Out)
@@ -2549,9 +2620,9 @@ source target since
     // =========================================================================
 
     const CANONICAL_GOLDEN_ISON: &str = r#"edges.KNOWS
-since source target
-"2020" :person:1 :person:2
-"2021" :person:10 :person:1
+since source target weight
+"2020" :person:1 :person:2 1.75
+"2021" :person:10 :person:1 0.5
 
 edges.WORKS_AT
 role source target
@@ -2559,50 +2630,55 @@ role source target
 
 edges.WORKS_ON
 hours source target
-"3" :person:10 :project:p1
-"5" :person:2 :project:p1
+3 :person:10 :project:p1
+5 :person:2 :project:p1
 
 nodes.company
-id name
-acme "Acme Corp"
+id listed name staff
+acme false "Acme Corp" 42
 
 nodes.person
-id age name
-"1" "30" Alice
-"10" "22" Jax
-"2" "25" Bob
+id active age name score
+"1" true "30" Alice 9.5
+"10" false "22" Jax -2.25
+"2" null "25" Bob null
 
 nodes.project
-id name tag
-p1 Alpha a|b"#;
+id budget name tag
+p1 1250 Alpha a|b"#;
 
-    const CANONICAL_GOLDEN_ISONL: &str = r#"edges.KNOWS|since source target|"2020" :person:1 :person:2
-edges.KNOWS|since source target|"2021" :person:10 :person:1
+    const CANONICAL_GOLDEN_ISONL: &str = r#"edges.KNOWS|since source target weight|"2020" :person:1 :person:2 1.75
+edges.KNOWS|since source target weight|"2021" :person:10 :person:1 0.5
 edges.WORKS_AT|role source target|"Lead Engineer" :person:1 :company:acme
-edges.WORKS_ON|hours source target|"3" :person:10 :project:p1
-edges.WORKS_ON|hours source target|"5" :person:2 :project:p1
-nodes.company|id name|acme "Acme Corp"
-nodes.person|id age name|"1" "30" Alice
-nodes.person|id age name|"10" "22" Jax
-nodes.person|id age name|"2" "25" Bob
-nodes.project|id name tag|p1 Alpha "a\|b""#;
+edges.WORKS_ON|hours source target|3 :person:10 :project:p1
+edges.WORKS_ON|hours source target|5 :person:2 :project:p1
+nodes.company|id listed name staff|acme false "Acme Corp" 42
+nodes.person|id active age name score|"1" true "30" Alice 9.5
+nodes.person|id active age name score|"10" false "22" Jax -2.25
+nodes.person|id active age name score|"2" null "25" Bob null
+nodes.project|id budget name tag|p1 1250 Alpha "a\|b""#;
 
     #[allow(clippy::type_complexity)]
     fn build_canonical_fixture(order: usize) -> ISONGraph {
         let mut g = ISONGraph::new("fixture");
-        let nodes: Vec<(&str, &str, Vec<(&str, &str)>)> = vec![
-            ("company", "acme", vec![("name", "Acme Corp")]),
-            ("person", "1", vec![("name", "Alice"), ("age", "30")]),
-            ("person", "10", vec![("name", "Jax"), ("age", "22")]),
-            ("person", "2", vec![("name", "Bob"), ("age", "25")]),
-            ("project", "p1", vec![("name", "Alpha"), ("tag", "a|b")]),
+        // Mixed types on purpose: the string ids and string ages pin that a
+        // value which would reparse as a number stays quoted, while the int,
+        // float and bool pin that a real number does not. No integral float
+        // appears - JavaScript cannot originate one, so a shared fixture must
+        // not ask for it.
+        let nodes: Vec<(&str, &str, Vec<(&str, Value)>)> = vec![
+            ("company", "acme", props![("name", "Acme Corp"), ("staff", 42i64), ("listed", false)]),
+            ("person", "1", props![("name", "Alice"), ("age", "30"), ("score", 9.5f64), ("active", true)]),
+            ("person", "10", props![("name", "Jax"), ("age", "22"), ("score", -2.25f64), ("active", false)]),
+            ("person", "2", props![("name", "Bob"), ("age", "25")]),
+            ("project", "p1", props![("name", "Alpha"), ("tag", "a|b"), ("budget", 1250i64)]),
         ];
-        let edges: Vec<(&str, (&str, &str), (&str, &str), Vec<(&str, &str)>)> = vec![
-            ("KNOWS", ("person", "10"), ("person", "1"), vec![("since", "2021")]),
-            ("KNOWS", ("person", "1"), ("person", "2"), vec![("since", "2020")]),
-            ("WORKS_AT", ("person", "1"), ("company", "acme"), vec![("role", "Lead Engineer")]),
-            ("WORKS_ON", ("person", "2"), ("project", "p1"), vec![("hours", "5")]),
-            ("WORKS_ON", ("person", "10"), ("project", "p1"), vec![("hours", "3")]),
+        let edges: Vec<(&str, (&str, &str), (&str, &str), Vec<(&str, Value)>)> = vec![
+            ("KNOWS", ("person", "10"), ("person", "1"), props![("since", "2021"), ("weight", 0.5f64)]),
+            ("KNOWS", ("person", "1"), ("person", "2"), props![("since", "2020"), ("weight", 1.75f64)]),
+            ("WORKS_AT", ("person", "1"), ("company", "acme"), props![("role", "Lead Engineer")]),
+            ("WORKS_ON", ("person", "2"), ("project", "p1"), props![("hours", 5i64)]),
+            ("WORKS_ON", ("person", "10"), ("project", "p1"), props![("hours", 3i64)]),
         ];
         let mut n = nodes;
         let mut e = edges;

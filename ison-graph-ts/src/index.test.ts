@@ -16,6 +16,7 @@ import {
   DuplicateNodeError,
   DuplicateEdgeError,
   InvalidIdentifierError,
+  type Properties,
 } from './index';
 
 describe('ISONGraph', () => {
@@ -535,9 +536,9 @@ describe('ISONGraph', () => {
 
 const CANONICAL_GOLDEN_ISON =
   "edges.KNOWS\n" +
-  "since source target\n" +
-  "\"2020\" :person:1 :person:2\n" +
-  "\"2021\" :person:10 :person:1\n" +
+  "since source target weight\n" +
+  "\"2020\" :person:1 :person:2 1.75\n" +
+  "\"2021\" :person:10 :person:1 0.5\n" +
   "\n" +
   "edges.WORKS_AT\n" +
   "role source target\n" +
@@ -545,50 +546,53 @@ const CANONICAL_GOLDEN_ISON =
   "\n" +
   "edges.WORKS_ON\n" +
   "hours source target\n" +
-  "\"3\" :person:10 :project:p1\n" +
-  "\"5\" :person:2 :project:p1\n" +
+  "3 :person:10 :project:p1\n" +
+  "5 :person:2 :project:p1\n" +
   "\n" +
   "nodes.company\n" +
-  "id name\n" +
-  "acme \"Acme Corp\"\n" +
+  "id listed name staff\n" +
+  "acme false \"Acme Corp\" 42\n" +
   "\n" +
   "nodes.person\n" +
-  "id age name\n" +
-  "\"1\" \"30\" Alice\n" +
-  "\"10\" \"22\" Jax\n" +
-  "\"2\" \"25\" Bob\n" +
+  "id active age name score\n" +
+  "\"1\" true \"30\" Alice 9.5\n" +
+  "\"10\" false \"22\" Jax -2.25\n" +
+  "\"2\" null \"25\" Bob null\n" +
   "\n" +
   "nodes.project\n" +
-  "id name tag\n" +
-  "p1 Alpha a|b";
+  "id budget name tag\n" +
+  "p1 1250 Alpha a|b";
 
 const CANONICAL_GOLDEN_ISONL =
-  "edges.KNOWS|since source target|\"2020\" :person:1 :person:2\n" +
-  "edges.KNOWS|since source target|\"2021\" :person:10 :person:1\n" +
+  "edges.KNOWS|since source target weight|\"2020\" :person:1 :person:2 1.75\n" +
+  "edges.KNOWS|since source target weight|\"2021\" :person:10 :person:1 0.5\n" +
   "edges.WORKS_AT|role source target|\"Lead Engineer\" :person:1 :company:acme\n" +
-  "edges.WORKS_ON|hours source target|\"3\" :person:10 :project:p1\n" +
-  "edges.WORKS_ON|hours source target|\"5\" :person:2 :project:p1\n" +
-  "nodes.company|id name|acme \"Acme Corp\"\n" +
-  "nodes.person|id age name|\"1\" \"30\" Alice\n" +
-  "nodes.person|id age name|\"10\" \"22\" Jax\n" +
-  "nodes.person|id age name|\"2\" \"25\" Bob\n" +
-  "nodes.project|id name tag|p1 Alpha \"a\\|b\"";
+  "edges.WORKS_ON|hours source target|3 :person:10 :project:p1\n" +
+  "edges.WORKS_ON|hours source target|5 :person:2 :project:p1\n" +
+  "nodes.company|id listed name staff|acme false \"Acme Corp\" 42\n" +
+  "nodes.person|id active age name score|\"1\" true \"30\" Alice 9.5\n" +
+  "nodes.person|id active age name score|\"10\" false \"22\" Jax -2.25\n" +
+  "nodes.person|id active age name score|\"2\" null \"25\" Bob null\n" +
+  "nodes.project|id budget name tag|p1 1250 Alpha \"a\\|b\"";
 
 function buildCanonicalFixture(order: number): ISONGraph {
   const g = new ISONGraph('fixture');
-  const nodes: Array<[string, string, Record<string, string>]> = [
-    ['company', 'acme', { name: 'Acme Corp' }],
-    ['person', '1', { name: 'Alice', age: '30' }],
-    ['person', '10', { name: 'Jax', age: '22' }],
+  // Record<string, string> here encoded the assumption that properties are
+  // strings. They are not: the shared fixture mixes int, float, bool and
+  // string so the ports have to agree on more than quoting.
+  const nodes: Array<[string, string, Properties]> = [
+    ['company', 'acme', { name: 'Acme Corp', staff: 42, listed: false }],
+    ['person', '1', { name: 'Alice', age: '30', score: 9.5, active: true }],
+    ['person', '10', { name: 'Jax', age: '22', score: -2.25, active: false }],
     ['person', '2', { name: 'Bob', age: '25' }],
-    ['project', 'p1', { name: 'Alpha', tag: 'a|b' }],
+    ['project', 'p1', { name: 'Alpha', tag: 'a|b', budget: 1250 }],
   ];
-  const edges: Array<[string, [string, string], [string, string], Record<string, string>]> = [
-    ['KNOWS', ['person', '10'], ['person', '1'], { since: '2021' }],
-    ['KNOWS', ['person', '1'], ['person', '2'], { since: '2020' }],
+  const edges: Array<[string, [string, string], [string, string], Properties]> = [
+    ['KNOWS', ['person', '10'], ['person', '1'], { since: '2021', weight: 0.5 }],
+    ['KNOWS', ['person', '1'], ['person', '2'], { since: '2020', weight: 1.75 }],
     ['WORKS_AT', ['person', '1'], ['company', 'acme'], { role: 'Lead Engineer' }],
-    ['WORKS_ON', ['person', '2'], ['project', 'p1'], { hours: '5' }],
-    ['WORKS_ON', ['person', '10'], ['project', 'p1'], { hours: '3' }],
+    ['WORKS_ON', ['person', '2'], ['project', 'p1'], { hours: 5 }],
+    ['WORKS_ON', ['person', '10'], ['project', 'p1'], { hours: 3 }],
   ];
   const seqN = order === 0 ? nodes : [...nodes].reverse();
   const seqE = order === 0 ? edges : [...edges].reverse();

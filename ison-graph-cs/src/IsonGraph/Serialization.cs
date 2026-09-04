@@ -296,7 +296,12 @@ public sealed partial class ISONGraph
     /// </summary>
     public string ToIsonl() => IsonParser.Ison.DumpsCanonicalIsonl(BuildDocument());
 
-    private static string? ValueText(object? value) => value switch
+    /// <summary>
+    /// Node ids are identifiers rather than values, so they are always text.
+    /// Property values keep whatever type the parser produced - flattening
+    /// them here was what made this port emit every value quoted.
+    /// </summary>
+    private static string? IdText(object? value) => value switch
     {
         null => null,
         Reference r => r.ToIson(),
@@ -322,16 +327,15 @@ public sealed partial class ISONGraph
             if (block.Kind != "nodes") continue;
             foreach (var row in block.Rows)
             {
-                var id = row.TryGetValue("id", out var rawId) ? ValueText(rawId) : null;
+                var id = row.TryGetValue("id", out var rawId) ? IdText(rawId) : null;
                 if (id is null)
                     throw new GraphError("FromIson: node row has no id");
 
-                var props = new Dictionary<string, string>();
+                var props = new Dictionary<string, object?>();
                 foreach (var kv in row)
                 {
                     if (kv.Key == "id") continue;
-                    var text = ValueText(kv.Value);
-                    if (text is not null) props[kv.Key] = text;
+                    if (kv.Value is not null) props[kv.Key] = kv.Value;
                 }
                 try
                 {
@@ -355,12 +359,11 @@ public sealed partial class ISONGraph
                     throw new GraphError(
                         "FromIson: Invalid node reference: edge row is missing a source or target");
 
-                var props = new Dictionary<string, string>();
+                var props = new Dictionary<string, object?>();
                 foreach (var kv in row)
                 {
                     if (kv.Key == "source" || kv.Key == "target") continue;
-                    var text = ValueText(kv.Value);
-                    if (text is not null) props[kv.Key] = text;
+                    if (kv.Value is not null) props[kv.Key] = kv.Value;
                 }
                 var sourceRef = new NodeRef(source.Type ?? string.Empty, source.Id);
                 var targetRef = new NodeRef(target.Type ?? string.Empty, target.Id);

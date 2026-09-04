@@ -16,6 +16,8 @@
 // Author: Mahesh Vaikri
 // Version: 1.0.0
 
+using System.Globalization;
+
 namespace IsonGraph;
 
 /// <summary>Library version.</summary>
@@ -49,19 +51,57 @@ public readonly record struct NodeRef(string Type, string Id)
 }
 
 /// <summary>Represents a graph node with properties.</summary>
+/// <summary>
+/// Helpers for reading typed property values.
+/// </summary>
+/// <remarks>
+/// Properties used to be strings, so query filtering and schema validation
+/// both worked on text. They still can - <see cref="ValueText"/> renders any
+/// value the way it used to be stored - but a real number now compares as a
+/// number rather than as a parse of its rendering.
+/// </remarks>
+public static class PropertyValue
+{
+    /// <summary>Render a property value as text.</summary>
+    public static string ValueText(object? value) => value switch
+    {
+        null => string.Empty,
+        bool b => b ? "true" : "false",
+        IsonParser.Reference r => r.ToIson(),
+        IFormattable f => f.ToString(null, CultureInfo.InvariantCulture),
+        _ => value.ToString() ?? string.Empty,
+    };
+
+    /// <summary>
+    /// Numeric view of a property: exact for a number, lenient for a string
+    /// that parses, so a query written against string-stored numbers still
+    /// matches.
+    /// </summary>
+    public static double? AsDouble(object? value) => value switch
+    {
+        long l => l,
+        int i => i,
+        double d => d,
+        float f => f,
+        string s when double.TryParse(s, NumberStyles.Float | NumberStyles.AllowLeadingSign,
+                                      CultureInfo.InvariantCulture, out var parsed) => parsed,
+        _ => (double?)null,
+    };
+}
+
 public sealed class Node
 {
     public string Type { get; }
     public string Id { get; }
-    public Dictionary<string, string> Properties { get; }
+    public Dictionary<string, object?> Properties { get; }
 
-    public Node(string type, string id, IDictionary<string, string>? properties = null)
+    public Node(string type, string id, IDictionary<string, object?>? properties = null)
     {
         Type = type;
         Id = id;
         Properties = properties is null
-            ? new Dictionary<string, string>()
-            : new Dictionary<string, string>(properties);
+            ? new Dictionary<string, object?>()
+            : new Dictionary<string, object?>(properties);
     }
 
     /// <summary>Node reference (type, id).</summary>
@@ -82,17 +122,17 @@ public sealed class Edge
     public string RelType { get; }
     public NodeRef Source { get; }
     public NodeRef Target { get; }
-    public Dictionary<string, string> Properties { get; }
+    public Dictionary<string, object?> Properties { get; }
 
     public Edge(string relType, NodeRef source, NodeRef target,
-                IDictionary<string, string>? properties = null)
+                IDictionary<string, object?>? properties = null)
     {
         RelType = relType;
         Source = source;
         Target = target;
         Properties = properties is null
-            ? new Dictionary<string, string>()
-            : new Dictionary<string, string>(properties);
+            ? new Dictionary<string, object?>()
+            : new Dictionary<string, object?>(properties);
     }
 
     /// <summary>Unique edge key "rel:sourceType:sourceId:targetType:targetId".</summary>
@@ -249,7 +289,7 @@ public sealed partial class ISONGraph
     /// and <see cref="DuplicateNodeError"/> if the node already exists.
     /// </summary>
     public Node AddNode(string nodeType, string nodeId,
-                        IDictionary<string, string>? properties = null)
+                        IDictionary<string, object?>? properties = null)
     {
         CheckIdentifier("Node type", nodeType);
         CheckIdentifier("Node id", nodeId);
@@ -323,7 +363,7 @@ public sealed partial class ISONGraph
 
     /// <summary>Merge properties into an existing node and return it.</summary>
     public Node UpdateNode(string nodeType, string nodeId,
-                           IDictionary<string, string> properties)
+                           IDictionary<string, object?> properties)
     {
         var node = GetNode(nodeType, nodeId);
         foreach (var (key, value) in properties)
@@ -377,7 +417,7 @@ public sealed partial class ISONGraph
     /// and <see cref="DuplicateEdgeError"/> if the edge already exists.
     /// </summary>
     public Edge AddEdge(string relType, NodeRef source, NodeRef target,
-                        IDictionary<string, string>? properties = null)
+                        IDictionary<string, object?>? properties = null)
     {
         CheckIdentifier("Relationship type", relType);
 

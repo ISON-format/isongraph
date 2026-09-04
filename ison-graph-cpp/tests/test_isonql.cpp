@@ -93,7 +93,7 @@ TEST(nodes_where_eq) {
 
     auto nodes = result.toNodes();
     for (const auto& node : nodes) {
-        ASSERT_EQ(node.properties.at("city"), "NYC");
+        ASSERT_EQ(ison_graph::valueToText(node.properties.at("city")), "NYC");
     }
 }
 
@@ -128,10 +128,10 @@ TEST(nodes_order_by_asc) {
     auto result = engine.execute("NODES person ORDER BY age ASC");
     auto nodes = result.toNodes();
     ASSERT_EQ(nodes.size(), 4);
-    ASSERT_EQ(nodes[0].properties.at("name"), "Bob");      // 25
-    ASSERT_EQ(nodes[1].properties.at("name"), "Diana");    // 28
-    ASSERT_EQ(nodes[2].properties.at("name"), "Alice");    // 30
-    ASSERT_EQ(nodes[3].properties.at("name"), "Charlie");  // 35
+    ASSERT_EQ(ison_graph::valueToText(nodes[0].properties.at("name")), "Bob");      // 25
+    ASSERT_EQ(ison_graph::valueToText(nodes[1].properties.at("name")), "Diana");    // 28
+    ASSERT_EQ(ison_graph::valueToText(nodes[2].properties.at("name")), "Alice");    // 30
+    ASSERT_EQ(ison_graph::valueToText(nodes[3].properties.at("name")), "Charlie");  // 35
 }
 
 TEST(nodes_order_by_desc) {
@@ -141,8 +141,8 @@ TEST(nodes_order_by_desc) {
     auto result = engine.execute("NODES person ORDER BY age DESC");
     auto nodes = result.toNodes();
     ASSERT_EQ(nodes.size(), 4);
-    ASSERT_EQ(nodes[0].properties.at("name"), "Charlie");  // 35
-    ASSERT_EQ(nodes[3].properties.at("name"), "Bob");      // 25
+    ASSERT_EQ(ison_graph::valueToText(nodes[0].properties.at("name")), "Charlie");  // 35
+    ASSERT_EQ(ison_graph::valueToText(nodes[3].properties.at("name")), "Bob");      // 25
 }
 
 TEST(nodes_limit) {
@@ -163,8 +163,8 @@ TEST(nodes_offset) {
     ASSERT_EQ(nodes.size(), 2);
     // Names sorted: Alice, Bob, Charlie, Diana
     // After offset 1: Bob, Charlie
-    ASSERT_EQ(nodes[0].properties.at("name"), "Bob");
-    ASSERT_EQ(nodes[1].properties.at("name"), "Charlie");
+    ASSERT_EQ(ison_graph::valueToText(nodes[0].properties.at("name")), "Bob");
+    ASSERT_EQ(ison_graph::valueToText(nodes[1].properties.at("name")), "Charlie");
 }
 
 TEST(nodes_multiple_conditions) {
@@ -439,8 +439,8 @@ TEST(fluent_nodes_order_limit) {
 
     auto nodes = result.toNodes();
     ASSERT_EQ(nodes.size(), 2);
-    ASSERT_EQ(nodes[0].properties.at("name"), "Charlie");  // 35
-    ASSERT_EQ(nodes[1].properties.at("name"), "Alice");    // 30
+    ASSERT_EQ(ison_graph::valueToText(nodes[0].properties.at("name")), "Charlie");  // 35
+    ASSERT_EQ(ison_graph::valueToText(nodes[1].properties.at("name")), "Alice");    // 30
 }
 
 TEST(fluent_nodes_count) {
@@ -486,8 +486,8 @@ TEST(fluent_offset_and_return) {
     auto nodes = result.toNodes();
     ASSERT_EQ(nodes.size(), 2);
     // Sorted: Alice, Bob, Charlie, Diana; after OFFSET 1: Bob, Charlie
-    ASSERT_EQ(nodes[0].properties.at("name"), "Bob");
-    ASSERT_EQ(nodes[1].properties.at("name"), "Charlie");
+    ASSERT_EQ(ison_graph::valueToText(nodes[0].properties.at("name")), "Bob");
+    ASSERT_EQ(ison_graph::valueToText(nodes[1].properties.at("name")), "Charlie");
 
     // RETURN projection: only the requested field remains
     for (const auto& node : nodes) {

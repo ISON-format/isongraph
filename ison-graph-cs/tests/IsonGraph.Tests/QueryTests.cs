@@ -463,7 +463,7 @@ public class ParserTests
 
 public class ConditionTests
 {
-    private static Dictionary<string, string> P(params (string K, string V)[] pairs) =>
+    private static Dictionary<string, object?> P(params (string K, object? V)[] pairs) =>
         pairs.ToDictionary(p => p.K, p => p.V);
 
     [Fact]
@@ -640,7 +640,7 @@ public class NodesQueryTests
     {
         var result = QueryFixtures.Engine().Execute("NODES person WHERE age > 30");
         Assert.Equal(3, result.Count); // Charlie (35), Eve (32), Frank (40)
-        Assert.All(result.Nodes, n => Assert.True(int.Parse(n.Properties["age"]) > 30));
+        Assert.All(result.Nodes, n => Assert.True(int.Parse(PropertyValue.ValueText(n.Properties["age"])) > 30));
     }
 
     [Fact]
@@ -648,7 +648,7 @@ public class NodesQueryTests
     {
         var result = QueryFixtures.Engine().Execute("NODES person WHERE city = NYC");
         Assert.Equal(3, result.Count); // Alice, Charlie, Eve
-        Assert.All(result.Nodes, n => Assert.Equal("NYC", n.Properties["city"]));
+        Assert.All(result.Nodes, n => Assert.Equal("NYC", PropertyValue.ValueText(n.Properties["city"])));
     }
 
     [Fact]
@@ -662,7 +662,7 @@ public class NodesQueryTests
     public void NodesOrderByAsc()
     {
         var result = QueryFixtures.Engine().Execute("NODES person ORDER BY age ASC");
-        var ages = result.Nodes.Select(n => int.Parse(n.Properties["age"])).ToList();
+        var ages = result.Nodes.Select(n => int.Parse(PropertyValue.ValueText(n.Properties["age"]))).ToList();
         Assert.Equal(ages.OrderBy(a => a).ToList(), ages);
     }
 
@@ -670,7 +670,7 @@ public class NodesQueryTests
     public void NodesOrderByDesc()
     {
         var result = QueryFixtures.Engine().Execute("NODES person ORDER BY age DESC");
-        var ages = result.Nodes.Select(n => int.Parse(n.Properties["age"])).ToList();
+        var ages = result.Nodes.Select(n => int.Parse(PropertyValue.ValueText(n.Properties["age"]))).ToList();
         Assert.Equal(ages.OrderByDescending(a => a).ToList(), ages);
     }
 
@@ -678,7 +678,7 @@ public class NodesQueryTests
     public void NodesOrderByStringField()
     {
         var result = QueryFixtures.Engine().Execute("NODES person ORDER BY name ASC");
-        var names = result.Nodes.Select(n => n.Properties["name"]).ToList();
+        var names = result.Nodes.Select(n => PropertyValue.ValueText(n.Properties["name"])).ToList();
         Assert.Equal(new List<string> { "Alice", "Bob", "Charlie", "Diana", "Eve", "Frank" },
                      names);
     }
@@ -697,7 +697,7 @@ public class NodesQueryTests
         var result = QueryFixtures.Engine()
             .Execute("NODES person ORDER BY age ASC LIMIT 2 OFFSET 2");
         Assert.Equal(2, result.Count);
-        var ages = result.Nodes.Select(n => int.Parse(n.Properties["age"])).ToList();
+        var ages = result.Nodes.Select(n => int.Parse(PropertyValue.ValueText(n.Properties["age"]))).ToList();
         Assert.True(ages[0] >= 28); // skipped 25, 28
     }
 
@@ -740,7 +740,7 @@ public class NodesQueryTests
     public void NodesContainsOperator()
     {
         var result = QueryFixtures.Engine().Execute("NODES person WHERE name CONTAINS a");
-        Assert.All(result.Nodes, n => Assert.Contains("a", n.Properties["name"]));
+        Assert.All(result.Nodes, n => Assert.Contains("a", PropertyValue.ValueText(n.Properties["name"])));
     }
 
     [Fact]
@@ -765,7 +765,7 @@ public class NodesQueryTests
             .Execute("NODES person WHERE city = LA OR city = Chicago");
         Assert.Equal(3, result.Count); // Bob (LA), Frank (LA), Diana (Chicago)
         Assert.All(result.Nodes,
-                   n => Assert.Contains(n.Properties["city"], new[] { "LA", "Chicago" }));
+                   n => Assert.Contains(PropertyValue.ValueText(n.Properties["city"]), new[] { "LA", "Chicago" }));
     }
 
     [Fact]
@@ -775,7 +775,7 @@ public class NodesQueryTests
             .Execute("NODES person WHERE age > 30 AND city = NYC OR city = Chicago");
         // (age > 30 AND NYC) -> Charlie, Eve; OR Chicago -> Diana
         Assert.Equal(3, result.Count);
-        var names = result.Nodes.Select(n => n.Properties["name"]).ToHashSet();
+        var names = result.Nodes.Select(n => PropertyValue.ValueText(n.Properties["name"])).ToHashSet();
         Assert.Equal(new HashSet<string> { "Charlie", "Eve", "Diana" }, names);
     }
 
@@ -803,7 +803,7 @@ public class NodesQueryTests
         var result = engine.Execute("NODES person ORDER BY age ASC");
         Assert.Equal(7, result.Count);
         Assert.Equal("999", result.Nodes[^1].Id);
-        var ages = result.Nodes.Take(6).Select(n => int.Parse(n.Properties["age"])).ToList();
+        var ages = result.Nodes.Take(6).Select(n => int.Parse(PropertyValue.ValueText(n.Properties["age"]))).ToList();
         Assert.Equal(ages.OrderBy(a => a).ToList(), ages);
 
         result = engine.Execute("NODES person ORDER BY age DESC");
@@ -821,7 +821,7 @@ public class NodesQueryTests
 
         var result = engine.Execute("NODES person WHERE email EXISTS");
         Assert.Equal(1, result.Count);
-        Assert.Equal("Alice", result.Nodes[0].Properties["name"]);
+        Assert.Equal("Alice", PropertyValue.ValueText(result.Nodes[0].Properties["name"]));
     }
 
     [Fact]
@@ -835,7 +835,7 @@ public class NodesQueryTests
 
         var result = engine.Execute("NODES person WHERE email NOT EXISTS");
         Assert.Equal(1, result.Count);
-        Assert.Equal("Bob", result.Nodes[0].Properties["name"]);
+        Assert.Equal("Bob", PropertyValue.ValueText(result.Nodes[0].Properties["name"]));
     }
 
     [Fact]
@@ -848,7 +848,7 @@ public class NodesQueryTests
 
         var result = engine.Execute("NODES person WHERE city NOT IN ('NYC')");
         Assert.Equal(1, result.Count);
-        Assert.Equal("Bob", result.Nodes[0].Properties["name"]);
+        Assert.Equal("Bob", PropertyValue.ValueText(result.Nodes[0].Properties["name"]));
     }
 }
 
@@ -874,7 +874,7 @@ public class EdgesQueryTests
     {
         var result = QueryFixtures.Engine().Execute("EDGES KNOWS WHERE since > 2019");
         Assert.Equal(2, result.Count); // 2020, 2021
-        Assert.All(result.Edges, e => Assert.True(int.Parse(e.Properties["since"]) > 2019));
+        Assert.All(result.Edges, e => Assert.True(int.Parse(PropertyValue.ValueText(e.Properties["since"])) > 2019));
     }
 
     [Fact]
@@ -882,7 +882,7 @@ public class EdgesQueryTests
     {
         var result = QueryFixtures.Engine().Execute("EDGES KNOWS WHERE close = TRUE");
         Assert.Equal(4, result.Count);
-        Assert.All(result.Edges, e => Assert.Equal("true", e.Properties["close"]));
+        Assert.All(result.Edges, e => Assert.Equal("true", PropertyValue.ValueText(e.Properties["close"])));
     }
 
     [Fact]
@@ -906,7 +906,7 @@ public class EdgesQueryTests
     {
         var result = QueryFixtures.Engine().Execute("EDGES WORKS_AT WHERE years > 5");
         Assert.Equal(3, result.Count); // 8, 6, 10
-        Assert.All(result.Edges, e => Assert.True(int.Parse(e.Properties["years"]) > 5));
+        Assert.All(result.Edges, e => Assert.True(int.Parse(PropertyValue.ValueText(e.Properties["years"])) > 5));
     }
 }
 
@@ -1202,7 +1202,7 @@ public class FluentApiTests
         // Regression: ages 30, 25, 35, 28, 32, 40 - "age > 30" matches exactly 3.
         var result = QueryFixtures.Engine().Match("person").Where("age", ">", 30).Execute();
         Assert.Equal(3, result.Count);
-        var names = result.Nodes.Select(n => n.Properties["name"]).ToHashSet();
+        var names = result.Nodes.Select(n => PropertyValue.ValueText(n.Properties["name"])).ToHashSet();
         Assert.Equal(new HashSet<string> { "Charlie", "Eve", "Frank" }, names);
     }
 
@@ -1220,7 +1220,7 @@ public class FluentApiTests
     public void MatchOrderBy()
     {
         var result = QueryFixtures.Engine().Match("person").OrderBy("age", "ASC").Execute();
-        var ages = result.Nodes.Select(n => int.Parse(n.Properties["age"])).ToList();
+        var ages = result.Nodes.Select(n => int.Parse(PropertyValue.ValueText(n.Properties["age"]))).ToList();
         Assert.Equal(ages.OrderBy(a => a).ToList(), ages);
     }
 
@@ -1228,7 +1228,7 @@ public class FluentApiTests
     public void MatchOrderByDesc()
     {
         var result = QueryFixtures.Engine().Match("person").OrderBy("age", "DESC").Execute();
-        Assert.Equal("40", result.Nodes[0].Properties["age"]);
+        Assert.Equal("40", PropertyValue.ValueText(result.Nodes[0].Properties["age"]));
     }
 
     [Fact]
@@ -1244,7 +1244,7 @@ public class FluentApiTests
         var result = QueryFixtures.Engine().Match("person")
             .OrderBy("age", "ASC").Offset(2).Limit(2).Execute();
         Assert.Equal(2, result.Count);
-        Assert.Equal("30", result.Nodes[0].Properties["age"]);
+        Assert.Equal("30", PropertyValue.ValueText(result.Nodes[0].Properties["age"]));
     }
 
     [Fact]
@@ -1319,7 +1319,7 @@ public class FluentApiTests
             .ReturnFields("name", "salary")
             .Execute();
         Assert.True(result.Count <= 5);
-        Assert.Equal("Frank", result.Nodes[0].Properties["name"]); // highest salary
+        Assert.Equal("Frank", PropertyValue.ValueText(result.Nodes[0].Properties["name"])); // highest salary
     }
 
     [Fact]
@@ -1350,7 +1350,7 @@ public class EdgeQueryBuilderTests
         var result = QueryFixtures.Engine().MatchEdges("KNOWS")
             .Where("since", ">", 2019).Execute();
         Assert.Equal(2, result.Count);
-        Assert.All(result.Edges, e => Assert.True(int.Parse(e.Properties["since"]) > 2019));
+        Assert.All(result.Edges, e => Assert.True(int.Parse(PropertyValue.ValueText(e.Properties["since"])) > 2019));
     }
 
     [Fact]
@@ -1392,7 +1392,7 @@ public class QueryResultTests
         var result = QueryFixtures.Engine().Execute("NODES person ORDER BY age ASC");
         var first = result.FirstNode();
         Assert.NotNull(first);
-        Assert.Equal("25", first.Properties["age"]); // Bob is youngest
+        Assert.Equal("25", PropertyValue.ValueText(first.Properties["age"])); // Bob is youngest
     }
 
     [Fact]
@@ -1534,7 +1534,7 @@ public class QueryEdgeCaseTests
         Assert.True(result.Count <= 2);
         foreach (var node in result.Nodes)
         {
-            var age = int.Parse(node.Properties["age"]);
+            var age = int.Parse(PropertyValue.ValueText(node.Properties["age"]));
             Assert.InRange(age, 25, 35);
         }
     }

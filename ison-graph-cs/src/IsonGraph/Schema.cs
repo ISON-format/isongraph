@@ -84,15 +84,15 @@ public sealed class ValidationError
     public ErrorCode Code { get; }
     public string Message { get; }
     public string Location { get; set; }
-    public Dictionary<string, string> Context { get; }
+    public Dictionary<string, object?> Context { get; }
 
     public ValidationError(ErrorCode code, string message, string location = "",
-                           Dictionary<string, string>? context = null)
+                           Dictionary<string, object?>? context = null)
     {
         Code = code;
         Message = message;
         Location = location;
-        Context = context ?? new Dictionary<string, string>();
+        Context = context ?? new Dictionary<string, object?>();
     }
 
     public override string ToString()
@@ -212,7 +212,7 @@ public sealed class StringField : FieldValidator
                 ErrorCode.MinLength,
                 $"Field '{fieldName}' must be at least {min} characters",
                 fieldName,
-                new Dictionary<string, string>
+                new Dictionary<string, object?>
                 {
                     ["min_length"] = min.ToString(CultureInfo.InvariantCulture),
                     ["actual"] = val.Length.ToString(CultureInfo.InvariantCulture),
@@ -225,7 +225,7 @@ public sealed class StringField : FieldValidator
                 ErrorCode.MaxLength,
                 $"Field '{fieldName}' must be at most {max} characters",
                 fieldName,
-                new Dictionary<string, string>
+                new Dictionary<string, object?>
                 {
                     ["max_length"] = max.ToString(CultureInfo.InvariantCulture),
                     ["actual"] = val.Length.ToString(CultureInfo.InvariantCulture),
@@ -242,7 +242,7 @@ public sealed class StringField : FieldValidator
                     ErrorCode.PatternMismatch,
                     $"Field '{fieldName}' does not match pattern",
                     fieldName,
-                    new Dictionary<string, string> { ["pattern"] = _patternSource ?? "" }));
+                    new Dictionary<string, object?> { ["pattern"] = _patternSource ?? "" }));
             }
         }
 
@@ -260,7 +260,7 @@ public sealed class StringField : FieldValidator
                 ErrorCode.InvalidEnum,
                 $"Field '{fieldName}' must be one of: {string.Join(", ", _enum)}",
                 fieldName,
-                new Dictionary<string, string>
+                new Dictionary<string, object?>
                 {
                     ["allowed"] = string.Join(", ", _enum),
                     ["actual"] = val,
@@ -313,7 +313,7 @@ public sealed class IntField : FieldValidator
                 ErrorCode.MinValue,
                 $"Field '{fieldName}' must be at least {min}",
                 fieldName,
-                new Dictionary<string, string>
+                new Dictionary<string, object?>
                 {
                     ["min"] = min.ToString(CultureInfo.InvariantCulture),
                     ["actual"] = parsed.ToString(CultureInfo.InvariantCulture),
@@ -326,7 +326,7 @@ public sealed class IntField : FieldValidator
                 ErrorCode.MaxValue,
                 $"Field '{fieldName}' must be at most {max}",
                 fieldName,
-                new Dictionary<string, string>
+                new Dictionary<string, object?>
                 {
                     ["max"] = max.ToString(CultureInfo.InvariantCulture),
                     ["actual"] = parsed.ToString(CultureInfo.InvariantCulture),
@@ -473,7 +473,7 @@ public sealed class RefField : FieldValidator
                 ErrorCode.RefWrongType,
                 $"Field '{fieldName}' must reference '{_nodeType}', got '{refType}'",
                 fieldName,
-                new Dictionary<string, string>
+                new Dictionary<string, object?>
                 {
                     ["expected"] = _nodeType,
                     ["actual"] = refType,
@@ -556,7 +556,10 @@ public sealed class NodeType
                 value = fieldType.DefaultValue;
                 node.Properties[fieldName] = value!;
             }
-            var fieldResult = fieldType.Validate(value, fieldName);
+            // Validated against the rendered text so a schema accepts exactly
+            // what it did when properties were strings. Type-aware validation
+            // is a separate change.
+            var fieldResult = fieldType.Validate(value is null ? null : PropertyValue.ValueText(value), fieldName);
             foreach (var error in fieldResult.Errors)
                 error.Location = $"{location}.{fieldName}";
             result.Merge(fieldResult);
@@ -667,7 +670,7 @@ public sealed class EdgeType
                 ErrorCode.InvalidSourceType,
                 $"Edge source must be '{_sourceType}', got '{edge.Source.Type}'",
                 location,
-                new Dictionary<string, string>
+                new Dictionary<string, object?>
                 {
                     ["expected"] = _sourceType,
                     ["actual"] = edge.Source.Type,
@@ -680,7 +683,7 @@ public sealed class EdgeType
                 ErrorCode.InvalidTargetType,
                 $"Edge target must be '{_targetType}', got '{edge.Target.Type}'",
                 location,
-                new Dictionary<string, string>
+                new Dictionary<string, object?>
                 {
                     ["expected"] = _targetType,
                     ["actual"] = edge.Target.Type,
@@ -719,7 +722,10 @@ public sealed class EdgeType
                 value = fieldType.DefaultValue;
                 edge.Properties[fieldName] = value!;
             }
-            var fieldResult = fieldType.Validate(value, fieldName);
+            // Validated against the rendered text so a schema accepts exactly
+            // what it did when properties were strings. Type-aware validation
+            // is a separate change.
+            var fieldResult = fieldType.Validate(value is null ? null : PropertyValue.ValueText(value), fieldName);
             foreach (var error in fieldResult.Errors)
                 error.Location = $"{location}.{fieldName}";
             result.Merge(fieldResult);

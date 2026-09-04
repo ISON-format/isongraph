@@ -10,27 +10,27 @@ public static class VizFixtures
     public static ISONGraph SocialGraph()
     {
         var g = new ISONGraph("social");
-        g.AddNode("person", "1", new Dictionary<string, string> { ["name"] = "Alice", ["age"] = "30" });
-        g.AddNode("person", "2", new Dictionary<string, string> { ["name"] = "Bob", ["age"] = "25" });
-        g.AddNode("person", "3", new Dictionary<string, string> { ["name"] = "Carol", ["age"] = "28" });
-        g.AddNode("company", "100", new Dictionary<string, string> { ["name"] = "TechCorp" });
+        g.AddNode("person", "1", new Dictionary<string, object?> { ["name"] = "Alice", ["age"] = "30" });
+        g.AddNode("person", "2", new Dictionary<string, object?> { ["name"] = "Bob", ["age"] = "25" });
+        g.AddNode("person", "3", new Dictionary<string, object?> { ["name"] = "Carol", ["age"] = "28" });
+        g.AddNode("company", "100", new Dictionary<string, object?> { ["name"] = "TechCorp" });
         g.AddEdge("KNOWS", new("person", "1"), new("person", "2"),
-                  new Dictionary<string, string> { ["since"] = "2020" });
+                  new Dictionary<string, object?> { ["since"] = "2020" });
         g.AddEdge("KNOWS", new("person", "2"), new("person", "3"),
-                  new Dictionary<string, string> { ["since"] = "2021" });
+                  new Dictionary<string, object?> { ["since"] = "2021" });
         g.AddEdge("WORKS_AT", new("person", "1"), new("company", "100"),
-                  new Dictionary<string, string> { ["role"] = "Engineer" });
+                  new Dictionary<string, object?> { ["role"] = "Engineer" });
         return g;
     }
 
     public static ISONGraph ParityGraph()
     {
         var g = new ISONGraph("parity");
-        g.AddNode("person", "alice", new Dictionary<string, string> { ["name"] = "Alice", ["age"] = "30" });
-        g.AddNode("person", "bob", new Dictionary<string, string> { ["name"] = "Bob", ["age"] = "25" });
-        g.AddNode("person", "carol", new Dictionary<string, string> { ["name"] = "Carol", ["age"] = "35" });
-        g.AddNode("company", "acme", new Dictionary<string, string> { ["name"] = "Acme" });
-        g.AddNode("project", "p1", new Dictionary<string, string> { ["name"] = "Alpha" });
+        g.AddNode("person", "alice", new Dictionary<string, object?> { ["name"] = "Alice", ["age"] = "30" });
+        g.AddNode("person", "bob", new Dictionary<string, object?> { ["name"] = "Bob", ["age"] = "25" });
+        g.AddNode("person", "carol", new Dictionary<string, object?> { ["name"] = "Carol", ["age"] = "35" });
+        g.AddNode("company", "acme", new Dictionary<string, object?> { ["name"] = "Acme" });
+        g.AddNode("project", "p1", new Dictionary<string, object?> { ["name"] = "Alpha" });
         g.AddEdge("KNOWS", new("person", "alice"), new("person", "bob"));
         g.AddEdge("KNOWS", new("person", "bob"), new("person", "carol"));
         g.AddEdge("WORKS_AT", new("person", "alice"), new("company", "acme"));
@@ -308,7 +308,7 @@ public class RenderSvgTests
         for (var i = 0; i < 10; i++)
         {
             g.AddNode($"type{i:D2}", "1",
-                      new Dictionary<string, string> { ["name"] = $"n{i}" });
+                      new Dictionary<string, object?> { ["name"] = $"n{i}" });
         }
         Assert.Contains(Viz.OtherLight, Viz.RenderSvg(g));
     }
@@ -345,7 +345,7 @@ public class RenderSvgTests
     {
         var g = new ISONGraph("labels");
         g.AddNode("person", "1",
-                  new Dictionary<string, string> { ["name"] = "Alice", ["nick"] = "Al" });
+                  new Dictionary<string, object?> { ["name"] = "Alice", ["nick"] = "Al" });
         var svg = Viz.RenderSvg(g, labelProperty: "nick");
         Assert.Contains(">Al</text>", svg);
     }
@@ -363,7 +363,7 @@ public class RenderSvgTests
     {
         var g = new ISONGraph("x");
         g.AddNode("a<b", "1",
-                  new Dictionary<string, string> { ["name"] = "Bad <script> & \"quotes\"" });
+                  new Dictionary<string, object?> { ["name"] = "Bad <script> & \"quotes\"" });
         var svg = Viz.RenderSvg(g);
         Assert.DoesNotContain("<script>", svg);
         XDocument.Parse(svg); // must stay well-formed

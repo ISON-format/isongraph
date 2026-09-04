@@ -126,7 +126,19 @@ struct Condition {
     Condition(std::string f, Operator o, Value v = std::monostate{})
         : field(std::move(f)), op(o), value(std::move(v)) {}
 
-    bool evaluate(const std::map<std::string, std::string>& properties) const {
+    /// Numeric view of a property: exact for a number, lenient for a string
+    /// that parses, so a query written against string-stored numbers keeps
+    /// matching now that properties carry types.
+    static bool propAsDouble(const ison::Value& v, double& out) {
+        if (v.is_int()) { out = static_cast<double>(v.as_int()); return true; }
+        if (v.is_float()) { out = v.as_float(); return true; }
+        if (v.is_string()) {
+            try { out = std::stod(v.as_string()); return true; } catch (...) { return false; }
+        }
+        return false;
+    }
+
+    bool evaluate(const ison_graph::Properties& properties) const {
         // EXISTS / NOT_EXISTS checks
         if (op == Operator::EXISTS) {
             return properties.count(field) > 0;
@@ -141,12 +153,12 @@ struct Condition {
             return false;
         }
 
-        const std::string& propValue = it->second;
+        const std::string propValue = ison_graph::valueToText(it->second);
 
         // Try numeric comparison first
         if (std::holds_alternative<int64_t>(value) || std::holds_alternative<double>(value)) {
-            try {
-                double propNum = std::stod(propValue);
+            double propNum = 0.0;
+            if (propAsDouble(it->second, propNum)) {
                 double valNum = std::holds_alternative<int64_t>(value)
                     ? static_cast<double>(std::get<int64_t>(value))
                     : std::get<double>(value);
@@ -160,12 +172,13 @@ struct Condition {
                     case Operator::LE: return propNum <= valNum;
                     default: break;
                 }
-            } catch (...) {
+            } else {
                 return false;
             }
         }
 
-        // String comparison
+        // String comparison, against the value's text form - which is what
+        // every property was before they carried types.
         std::string valStr = valueToString(value);
 
         switch (op) {
@@ -271,14 +284,14 @@ struct Condition {
 struct NodeResult {
     std::string type;
     std::string id;
-    std::map<std::string, std::string> properties;
+    ison_graph::Properties properties;
 };
 
 struct EdgeResult {
     std::string relType;
     ison_graph::NodeRef source;
     ison_graph::NodeRef target;
-    std::map<std::string, std::string> properties;
+    ison_graph::Properties properties;
 };
 
 struct PathResult {
@@ -1015,7 +1028,7 @@ private:
     ISONQLParser parser_;
 
     // OR across groups, AND within a group. No groups = match everything.
-    bool matchesConditions(const std::map<std::string, std::string>& properties,
+    bool matchesConditions(const ison_graph::Properties& properties,
                           const std::vector<std::vector<Condition>>& conditionGroups) {
         if (conditionGroups.empty()) return true;
         for (const auto& group : conditionGroups) {
@@ -1053,8 +1066,12 @@ private:
             std::sort(nodes.begin(), nodes.end(), [&](const NodeResult& a, const NodeResult& b) {
                 auto itA = a.properties.find(*parsed.orderBy);
                 auto itB = b.properties.find(*parsed.orderBy);
-                std::string valA = (itA != a.properties.end()) ? itA->second : "";
-                std::string valB = (itB != b.properties.end()) ? itB->second : "";
+                // Sort on the rendered value, as this did before properties
+                // carried types.
+                std::string valA = (itA != a.properties.end())
+                    ? ison_graph::valueToText(itA->second) : "";
+                std::string valB = (itB != b.properties.end())
+                    ? ison_graph::valueToText(itB->second) : "";
 
                 if (parsed.orderDir == SortOrder::DESC) {
                     return valA > valB;
@@ -1078,7 +1095,7 @@ private:
         // RETURN projection: keep only the requested property fields
         if (parsed.returnFields && !parsed.returnFields->empty()) {
             for (auto& node : nodes) {
-                std::map<std::string, std::string> projected;
+                ison_graph::Properties projected;
                 for (const auto& field : *parsed.returnFields) {
                     auto it = node.properties.find(field);
                     if (it != node.properties.end()) {
@@ -1244,7 +1261,10 @@ private:
                     auto it = node.properties.find(*parsed.property);
                     if (it != node.properties.end()) {
                         try {
-                            values.push_back(std::stod(it->second));
+                            double n = 0.0;
+                            if (Condition::propAsDouble(it->second, n)) {
+                                values.push_back(n);
+                            }
                         } catch (...) {}
                     }
                 }

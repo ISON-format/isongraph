@@ -7,7 +7,9 @@ namespace IsonGraph.Tests;
 
 internal static class Props
 {
-    public static Dictionary<string, string> Of(params (string Key, string Value)[] pairs) =>
+    // Values are object? so a test can pass an int, float or bool - the
+    // point of typed properties.
+    public static Dictionary<string, object?> Of(params (string Key, object? Value)[] pairs) =>
         pairs.ToDictionary(p => p.Key, p => p.Value);
 }
 
@@ -21,8 +23,8 @@ public class NodeTests
 
         Assert.Equal("person", node.Type);
         Assert.Equal("1", node.Id);
-        Assert.Equal("Alice", node.Properties["name"]);
-        Assert.Equal("30", node.Properties["age"]);
+        Assert.Equal("Alice", PropertyValue.ValueText(node.Properties["name"]));
+        Assert.Equal("30", PropertyValue.ValueText(node.Properties["age"]));
     }
 
     [Fact]
@@ -30,7 +32,7 @@ public class NodeTests
     {
         var graph = new ISONGraph();
         graph.AddNode("person", "1", Props.Of(("name", "Alice")));
-        Assert.Equal("Alice", graph.GetNode("person", "1").Properties["name"]);
+        Assert.Equal("Alice", PropertyValue.ValueText(graph.GetNode("person", "1").Properties["name"]));
         Assert.Equal("Alice", graph.GetNode(new NodeRef("person", "1")).Properties["name"]);
     }
 
@@ -158,9 +160,9 @@ public class NodeTests
         graph.UpdateNode("person", "1", Props.Of(("age", "31"), ("email", "alice@example.com")));
 
         var node = graph.GetNode("person", "1");
-        Assert.Equal("31", node.Properties["age"]);
-        Assert.Equal("alice@example.com", node.Properties["email"]);
-        Assert.Equal("Alice", node.Properties["name"]);
+        Assert.Equal("31", PropertyValue.ValueText(node.Properties["age"]));
+        Assert.Equal("alice@example.com", PropertyValue.ValueText(node.Properties["email"]));
+        Assert.Equal("Alice", PropertyValue.ValueText(node.Properties["name"]));
     }
 
     [Fact]
@@ -235,7 +237,7 @@ public class EdgeTests
         Assert.Equal("KNOWS", edge.RelType);
         Assert.Equal(new NodeRef("person", "1"), edge.Source);
         Assert.Equal(new NodeRef("person", "2"), edge.Target);
-        Assert.Equal("2020", edge.Properties["since"]);
+        Assert.Equal("2020", PropertyValue.ValueText(edge.Properties["since"]));
     }
 
     [Fact]
@@ -283,7 +285,7 @@ public class EdgeTests
                       Props.Of(("since", "2020")));
 
         var edge = graph.GetEdge("KNOWS", new("person", "1"), new("person", "2"));
-        Assert.Equal("2020", edge.Properties["since"]);
+        Assert.Equal("2020", PropertyValue.ValueText(edge.Properties["since"]));
         Assert.Throws<EdgeNotFoundError>(
             () => graph.GetEdge("KNOWS", new("person", "2"), new("person", "1")));
     }
@@ -507,7 +509,7 @@ public class TraversalTests
         var result = _graph.Traverse(
             new("person", "1"),
             new[] { ("KNOWS", Direction.Out) },
-            node => node.Properties.GetValueOrDefault("name") == "Person2");
+            node => PropertyValue.ValueText(node.Properties.GetValueOrDefault("name")) == "Person2");
         Assert.Equal(new List<NodeRef> { new("person", "2") }, result);
 
         var none = _graph.Traverse(
@@ -865,7 +867,7 @@ public class FluentTraversalTests
         var result = _graph.Start(new("person", "1"))
             .Hop("KNOWS")
             .Hop("KNOWS")
-            .Filter(n => int.Parse(n.Properties.GetValueOrDefault("age", "0")) > 30)
+            .Filter(n => int.Parse(PropertyValue.ValueText(n.Properties.GetValueOrDefault("age", "0"))) > 30)
             .Collect();
 
         Assert.Equal(new List<NodeRef> { new("person", "3") }, result);
@@ -876,7 +878,7 @@ public class FluentTraversalTests
     {
         var nodes = _graph.Start(new("person", "1")).Hop("KNOWS").CollectNodes();
         Assert.Single(nodes);
-        Assert.Equal("Bob", nodes[0].Properties["name"]);
+        Assert.Equal("Bob", PropertyValue.ValueText(nodes[0].Properties["name"]));
     }
 
     [Fact]
@@ -899,7 +901,7 @@ public class FluentTraversalTests
     public void HopWithWherePredicate()
     {
         var result = _graph.Start(new("person", "1"))
-            .Hop("KNOWS", Direction.Out, n => n.Properties["name"] == "Nobody")
+            .Hop("KNOWS", Direction.Out, n => PropertyValue.ValueText(n.Properties["name"]) == "Nobody")
             .Collect();
         Assert.Empty(result);
     }

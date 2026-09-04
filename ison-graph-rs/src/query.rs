@@ -13,12 +13,12 @@
 //! # Example
 //!
 //! ```rust
-//! use ison_graph::{ISONGraph, query::{QueryEngine, QueryResult}};
+//! use ison_graph::{ISONGraph, props, query::{QueryEngine, QueryResult}};
 //!
 //! let mut graph = ISONGraph::new("social");
-//! graph.add_node("person", "alice", vec![("name", "Alice"), ("age", "30")]).unwrap();
-//! graph.add_node("person", "bob", vec![("name", "Bob"), ("age", "25")]).unwrap();
-//! graph.add_edge("KNOWS", ("person", "alice"), ("person", "bob"), vec![("since", "2020")]).unwrap();
+//! graph.add_node("person", "alice", props![("name", "Alice"), ("age", 30i64)]).unwrap();
+//! graph.add_node("person", "bob", props![("name", "Bob"), ("age", 25i64)]).unwrap();
+//! graph.add_edge("KNOWS", ("person", "alice"), ("person", "bob"), props![("since", 2020i64)]).unwrap();
 //!
 //! let engine = QueryEngine::new(&graph);
 //! let result = engine.execute("NODES person WHERE age > 25").unwrap();
@@ -27,6 +27,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 use crate::{ISONGraph, Node, Edge, NodeId, Direction, GraphError, Result};
+use ison_rs::Value as PropValue;
 
 /// Query operators for conditions
 #[derive(Debug, Clone, PartialEq)]
@@ -106,8 +107,13 @@ impl Condition {
         }
     }
 
-    /// Evaluate condition against properties
-    pub fn evaluate(&self, properties: &HashMap<String, String>) -> bool {
+    /// Evaluate condition against properties.
+    ///
+    /// Properties carry real types now, so a numeric comparison against an
+    /// int or float is exact rather than a parse of its rendering. A string
+    /// that happens to hold a number still compares numerically, so queries
+    /// written against the old string-only storage keep working.
+    pub fn evaluate(&self, properties: &HashMap<String, PropValue>) -> bool {
         match self.operator {
             Operator::Exists => properties.contains_key(&self.field),
             Operator::NotExists => !properties.contains_key(&self.field),
@@ -121,16 +127,42 @@ impl Condition {
         }
     }
 
-    fn compare(&self, prop_value: &str) -> bool {
+    /// Render a property for the string operators, which had every value as
+    /// text before properties were typed.
+    fn prop_text(prop: &PropValue) -> String {
+        match prop {
+            PropValue::Null => String::new(),
+            PropValue::Bool(b) => b.to_string(),
+            PropValue::Int(i) => i.to_string(),
+            PropValue::Float(f) => f.to_string(),
+            PropValue::String(s) => s.clone(),
+            PropValue::Reference(r) => r.to_ison(),
+        }
+    }
+
+    /// Numeric view of a property: exact for int/float, lenient for a string
+    /// that parses, so `age > 25` still matches an age stored as "30".
+    fn prop_f64(prop: &PropValue) -> Option<f64> {
+        match prop {
+            PropValue::Int(i) => Some(*i as f64),
+            PropValue::Float(f) => Some(*f),
+            PropValue::String(s) => s.parse::<f64>().ok(),
+            _ => None,
+        }
+    }
+
+    fn compare(&self, prop: &PropValue) -> bool {
+        let text = Self::prop_text(prop);
+        let prop_value: &str = &text;
         match &self.operator {
-            Operator::Eq => self.eq_compare(prop_value),
-            Operator::Ne => !self.eq_compare(prop_value),
-            Operator::Gt => self.numeric_compare(prop_value, |a, b| a > b),
-            Operator::Ge => self.numeric_compare(prop_value, |a, b| a >= b),
-            Operator::Lt => self.numeric_compare(prop_value, |a, b| a < b),
-            Operator::Le => self.numeric_compare(prop_value, |a, b| a <= b),
-            Operator::In => self.in_compare(prop_value, true),
-            Operator::NotIn => self.in_compare(prop_value, false),
+            Operator::Eq => self.eq_compare(prop),
+            Operator::Ne => !self.eq_compare(prop),
+            Operator::Gt => self.numeric_compare(prop, |a, b| a > b),
+            Operator::Ge => self.numeric_compare(prop, |a, b| a >= b),
+            Operator::Lt => self.numeric_compare(prop, |a, b| a < b),
+            Operator::Le => self.numeric_compare(prop, |a, b| a <= b),
+            Operator::In => self.in_compare(prop, true),
+            Operator::NotIn => self.in_compare(prop, false),
             Operator::Contains => {
                 if let Value::String(s) = &self.value {
                     prop_value.contains(s.as_str())
@@ -165,22 +197,27 @@ impl Condition {
         }
     }
 
-    fn eq_compare(&self, prop_value: &str) -> bool {
+    fn eq_compare(&self, prop: &PropValue) -> bool {
         match &self.value {
-            Value::String(s) => prop_value == s,
-            Value::Int(i) => prop_value.parse::<i64>().ok() == Some(*i),
-            Value::Float(f) => prop_value.parse::<f64>().ok() == Some(*f),
-            Value::Bool(b) => prop_value.parse::<bool>().ok() == Some(*b),
-            Value::Null => prop_value.is_empty(),
+            Value::String(s) => Self::prop_text(prop) == *s,
+            Value::Int(i) => Self::prop_f64(prop) == Some(*i as f64),
+            Value::Float(f) => Self::prop_f64(prop) == Some(*f),
+            Value::Bool(b) => match prop {
+                PropValue::Bool(p) => p == b,
+                PropValue::String(s) => s.parse::<bool>().ok() == Some(*b),
+                _ => false,
+            },
+            Value::Null => matches!(prop, PropValue::Null)
+                || matches!(prop, PropValue::String(s) if s.is_empty()),
             _ => false,
         }
     }
 
-    fn numeric_compare<F>(&self, prop_value: &str, cmp: F) -> bool
+    fn numeric_compare<F>(&self, prop: &PropValue, cmp: F) -> bool
     where
         F: Fn(f64, f64) -> bool,
     {
-        let prop_num = prop_value.parse::<f64>().ok();
+        let prop_num = Self::prop_f64(prop);
         let val_num = self.value.as_f64();
         match (prop_num, val_num) {
             (Some(a), Some(b)) => cmp(a, b),
@@ -188,13 +225,13 @@ impl Condition {
         }
     }
 
-    fn in_compare(&self, prop_value: &str, should_contain: bool) -> bool {
+    fn in_compare(&self, prop: &PropValue, should_contain: bool) -> bool {
         if let Value::List(list) = &self.value {
             let found = list.iter().any(|v| {
                 if let Value::String(s) = v {
-                    prop_value == s
+                    Self::prop_text(prop) == *s
                 } else if let Value::Int(i) = v {
-                    prop_value.parse::<i64>().ok() == Some(*i)
+                    Self::prop_f64(prop) == Some(*i as f64)
                 } else {
                     false
                 }
@@ -282,13 +319,13 @@ pub enum QueryData {
     Node {
         node_type: String,
         id: String,
-        properties: HashMap<String, String>,
+        properties: HashMap<String, PropValue>,
     },
     Edge {
         rel_type: String,
         source: NodeId,
         target: NodeId,
-        properties: HashMap<String, String>,
+        properties: HashMap<String, PropValue>,
     },
     NodeRef(NodeId),
     Path {
@@ -298,7 +335,7 @@ pub enum QueryData {
     },
     Count(usize),
     Aggregate(Option<f64>),
-    Fields(HashMap<String, String>),
+    Fields(HashMap<String, PropValue>),
 }
 
 #[derive(Debug, Clone)]
@@ -1061,20 +1098,25 @@ impl<'a> QueryEngine<'a> {
         if let Some(order_by) = &parsed.order_by {
             let desc = parsed.order_dir == SortOrder::Desc;
             nodes.sort_by(|a, b| {
-                let a_val = a.properties.get(order_by).map(|s| s.as_str()).unwrap_or("");
-                let b_val = b.properties.get(order_by).map(|s| s.as_str()).unwrap_or("");
+                // Numbers sort numerically whether they are stored as int,
+                // float, or a string that parses; anything else falls back to
+                // its text, which is how this ordered before properties were
+                // typed.
+                let a_num = a.properties.get(order_by).and_then(Condition::prop_f64);
+                let b_num = b.properties.get(order_by).and_then(Condition::prop_f64);
+                if let (Some(x), Some(y)) = (a_num, b_num) {
+                    let ord = x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal);
+                    return if desc { ord.reverse() } else { ord };
+                }
 
-                // Try numeric comparison first
-                if let (Ok(a_num), Ok(b_num)) = (a_val.parse::<f64>(), b_val.parse::<f64>()) {
-                    if desc {
-                        b_num.partial_cmp(&a_num).unwrap_or(std::cmp::Ordering::Equal)
-                    } else {
-                        a_num.partial_cmp(&b_num).unwrap_or(std::cmp::Ordering::Equal)
-                    }
-                } else if desc {
-                    b_val.cmp(a_val)
+                let a_val = a.properties.get(order_by).map(Condition::prop_text)
+                    .unwrap_or_default();
+                let b_val = b.properties.get(order_by).map(Condition::prop_text)
+                    .unwrap_or_default();
+                if desc {
+                    b_val.cmp(&a_val)
                 } else {
-                    a_val.cmp(b_val)
+                    a_val.cmp(&b_val)
                 }
             });
         }
@@ -1324,7 +1366,7 @@ impl<'a> QueryEngine<'a> {
         // Extract numeric values
         let values: Vec<f64> = nodes.iter()
             .filter_map(|n| n.properties.get(prop))
-            .filter_map(|v| v.parse::<f64>().ok())
+            .filter_map(Condition::prop_f64)
             .collect();
 
         if values.is_empty() {
@@ -1346,7 +1388,7 @@ impl<'a> QueryEngine<'a> {
     /// An empty group list matches everything.
     fn matches_conditions(
         &self,
-        properties: &HashMap<String, String>,
+        properties: &HashMap<String, PropValue>,
         condition_groups: &[Vec<Condition>],
     ) -> bool {
         condition_groups.is_empty()
@@ -1513,11 +1555,11 @@ mod tests {
 
     fn create_test_graph() -> ISONGraph {
         let mut graph = ISONGraph::new("test");
-        graph.add_node("person", "1", vec![("name", "Alice"), ("age", "30"), ("city", "NYC")]).unwrap();
-        graph.add_node("person", "2", vec![("name", "Bob"), ("age", "25"), ("city", "LA")]).unwrap();
-        graph.add_node("person", "3", vec![("name", "Charlie"), ("age", "35"), ("city", "NYC")]).unwrap();
-        graph.add_edge("KNOWS", ("person", "1"), ("person", "2"), vec![("since", "2020")]).unwrap();
-        graph.add_edge("KNOWS", ("person", "2"), ("person", "3"), vec![("since", "2021")]).unwrap();
+        graph.add_node("person", "1", props![("name", "Alice"), ("age", "30"), ("city", "NYC")]).unwrap();
+        graph.add_node("person", "2", props![("name", "Bob"), ("age", "25"), ("city", "LA")]).unwrap();
+        graph.add_node("person", "3", props![("name", "Charlie"), ("age", "35"), ("city", "NYC")]).unwrap();
+        graph.add_edge("KNOWS", ("person", "1"), ("person", "2"), props![("since", "2020")]).unwrap();
+        graph.add_edge("KNOWS", ("person", "2"), ("person", "3"), props![("since", "2021")]).unwrap();
         graph
     }
 
@@ -1659,9 +1701,9 @@ mod tests {
 
     #[test]
     fn test_condition_evaluation() {
-        let mut props = HashMap::new();
-        props.insert("age".into(), "30".into());
-        props.insert("name".into(), "Alice".into());
+        let mut props: HashMap<String, PropValue> = HashMap::new();
+        props.insert("age".into(), PropValue::String("30".to_string()));
+        props.insert("name".into(), PropValue::String("Alice".to_string()));
 
         let cond = Condition::new("age", Operator::Gt, Value::Int(25));
         assert!(cond.evaluate(&props));
@@ -1677,7 +1719,7 @@ mod tests {
     fn test_exists_postfix_and_not_in() {
         let graph = create_test_graph();
         let mut extra = graph;
-        extra.add_node("person", "4", vec![("name", "Dave")]).unwrap();
+        extra.add_node("person", "4", props![("name", "Dave")]).unwrap();
         let engine = QueryEngine::new(&extra);
 
         let r = engine.execute("NODES person WHERE city EXISTS").unwrap();
