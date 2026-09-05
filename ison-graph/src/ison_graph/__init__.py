@@ -1679,18 +1679,21 @@ __all__ = [
 # Submodule Imports (Lazy)
 # =============================================================================
 
+_LAZY_SUBMODULES = frozenset({'query', 'schema', 'multigraph', 'structural'})
+
+
 def __getattr__(name: str):
-    """Lazy import for submodules."""
-    if name == 'query':
-        from . import query
-        return query
-    if name == 'schema':
-        from . import schema
-        return schema
-    if name == 'multigraph':
-        from . import multigraph
-        return multigraph
-    if name == 'structural':
-        from . import structural
-        return structural
+    """Lazy import for submodules.
+
+    importlib rather than `from . import <name>`: that form probes the
+    package with hasattr first, which calls this function again for the same
+    name and recurses until the stack runs out. Caching in globals() means a
+    submodule resolves here once and is a plain attribute afterwards.
+    """
+    if name in _LAZY_SUBMODULES:
+        import importlib
+
+        module = importlib.import_module(f'.{name}', __name__)
+        globals()[name] = module
+        return module
     raise AttributeError(f"module 'ison_graph' has no attribute '{name}'")

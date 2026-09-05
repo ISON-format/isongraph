@@ -1062,3 +1062,34 @@ class TestFromDictDuplicateEdges:
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
+
+class TestSubmoduleImports:
+    """`from ison_graph import <submodule>` has to work.
+
+    The lazy __getattr__ used `from . import <name>`, which probes the package
+    with hasattr, re-entering __getattr__ for the same name until the stack ran
+    out. Every doc example happened to use `from ison_graph.schema import ...`,
+    which goes through the import machinery instead and never touched it, so
+    the whole lazy path was broken from 1.0.0 with nothing to notice.
+    """
+
+    @pytest.mark.parametrize(
+        "name", ["query", "schema", "multigraph", "structural"]
+    )
+    def test_submodule_is_importable_from_the_package(self, name):
+        import importlib
+
+        pkg = importlib.import_module("ison_graph")
+        # drop any cached attribute so __getattr__ actually runs
+        if hasattr(pkg, name):
+            delattr(pkg, name)
+
+        module = getattr(pkg, name)
+        assert module.__name__ == f"ison_graph.{name}"
+
+    def test_unknown_attribute_raises_attribute_error(self):
+        import ison_graph
+
+        with pytest.raises(AttributeError, match="no attribute"):
+            ison_graph.definitely_not_a_submodule
