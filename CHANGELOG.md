@@ -6,7 +6,7 @@ share this file and, from 1.3.0, a single version number.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.4.0] — unreleased
+## [1.4.0] — 2026-09-05
 
 Rust, C# and C++ change their property API. Those three stored every value
 as a string, so they serialized differently from Python, JS and TS - one
@@ -45,6 +45,15 @@ it. They now use their parser's own value type.
 
 - The three string-only ports round-trip values without flattening them.
   Loading `42` gave back the string `"42"`, which then re-emitted quoted.
+
+- **`schema-generator` emitted Python that could not run.** It imported
+  `StringField`/`IntField`/`FloatField`/`BoolField` - the names the Rust, JS,
+  TS, C# and C++ ports use - where Python has `String`/`Int`/`Float`/`Bool`;
+  it called `.min_length()`/`.max_length()`, spelled `.min()`/`.max()` on
+  Python's `String`; it called the singular `.node_type()`/`.edge_type()`;
+  and it chained across lines without brackets, so the output was a syntax
+  error regardless. Its tests asserted substrings and so passed throughout;
+  they now execute the generated code.
 
 ### Known limitation
 
