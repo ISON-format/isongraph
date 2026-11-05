@@ -284,6 +284,30 @@ public sealed partial class ISONGraph
     }
 
     /// <summary>
+    /// Reject property values that change type on a round trip. ISON has no
+    /// spelling for a non-finite float: NaN and infinity are written bare and
+    /// read back as the <em>strings</em> "nan" / "inf", so the value changes
+    /// type silently. Refused here, where the mistake is still visible.
+    /// </summary>
+    private static void CheckPropertyValues(string kind, IDictionary<string, object?>? properties)
+    {
+        if (properties is null) return;
+        foreach (var (key, value) in properties)
+        {
+            var nonFinite = value switch
+            {
+                double d => !double.IsFinite(d),
+                float f => !float.IsFinite(f),
+                _ => false,
+            };
+            if (nonFinite)
+                throw new ArgumentException(
+                    $"{kind} '{key}' = {value} cannot be encoded: a float must be finite " +
+                    "(NaN and infinity are read back as strings).");
+        }
+    }
+
+    /// <summary>
     /// Add a node to the graph.
     /// Throws <see cref="ArgumentException"/> if the type or id contains ':' or '|',
     /// and <see cref="DuplicateNodeError"/> if the node already exists.
@@ -293,6 +317,7 @@ public sealed partial class ISONGraph
     {
         CheckIdentifier("Node type", nodeType);
         CheckIdentifier("Node id", nodeId);
+        CheckPropertyValues("Node property", properties);
 
         if (!_nodesByType.TryGetValue(nodeType, out var typeNodes))
         {
@@ -365,6 +390,7 @@ public sealed partial class ISONGraph
     public Node UpdateNode(string nodeType, string nodeId,
                            IDictionary<string, object?> properties)
     {
+        CheckPropertyValues("Node property", properties);
         var node = GetNode(nodeType, nodeId);
         foreach (var (key, value) in properties)
             node.Properties[key] = value;
@@ -420,6 +446,7 @@ public sealed partial class ISONGraph
                         IDictionary<string, object?>? properties = null)
     {
         CheckIdentifier("Relationship type", relType);
+        CheckPropertyValues("Edge property", properties);
 
         if (!HasNode(source))
             throw new NodeNotFoundError(source);

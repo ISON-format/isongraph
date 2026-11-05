@@ -286,11 +286,22 @@ pub enum GraphError {
     #[error("{0}")]
     InvalidIdentifier(String),
 
+    /// A property value cannot survive a serialization round trip. ISON has
+    /// no spelling for a non-finite float: NaN and infinity are written bare
+    /// and read back as the *strings* "nan" / "inf".
+    #[error("{0}")]
+    InvalidPropertyValue(String),
+
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 }
 
 pub type Result<T> = std::result::Result<T, GraphError>;
+
+/// Written into `meta.graph` by the Python `MultiGraph`. This port has no
+/// multigraph, so loading such a document would silently drop its parallel
+/// edges; it is refused instead.
+pub const MULTIGRAPH_FORMAT: &str = "ison-graph-multigraph-v1";
 
 // =============================================================================
 // ISONGraph - Main Graph Structure
@@ -512,6 +523,26 @@ impl ISONGraph {
         Ok(())
     }
 
+    /// Reject property values that change type on a round trip; see
+    /// [`GraphError::InvalidPropertyValue`].
+    fn check_property_values<'a>(
+        kind: &str,
+        properties: impl Iterator<Item = (&'a str, &'a Value)>,
+    ) -> Result<()> {
+        for (name, value) in properties {
+            if let Value::Float(f) = value {
+                if !f.is_finite() {
+                    return Err(GraphError::InvalidPropertyValue(format!(
+                        "{} {:?} = {} cannot be encoded: a float must be finite \
+                         (NaN and infinity are read back as strings).",
+                        kind, name, f
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn add_node(
         &mut self,
         node_type: &str,
@@ -521,6 +552,7 @@ impl ISONGraph {
         Self::check_identifier("Node type", node_type)?;
         Self::check_identifier("Node id", node_id)?;
         Self::check_property_names("Node property", properties.iter().map(|(k, _)| *k))?;
+        Self::check_property_values("Node property", properties.iter().map(|(k, v)| (*k, v)))?;
 
         let type_nodes = self.nodes.entry(node_type.to_string()).or_default();
 
@@ -594,6 +626,8 @@ impl ISONGraph {
         node_id: &str,
         properties: Vec<(&str, Value)>,
     ) -> Result<()> {
+        Self::check_property_names("Node property", properties.iter().map(|(k, _)| *k))?;
+        Self::check_property_values("Node property", properties.iter().map(|(k, v)| (*k, v)))?;
         let node = self
             .nodes
             .get_mut(node_type)
@@ -648,6 +682,7 @@ impl ISONGraph {
     ) -> Result<()> {
         Self::check_identifier("Relationship type", rel_type)?;
         Self::check_property_names("Edge property", properties.iter().map(|(k, _)| *k))?;
+        Self::check_property_values("Edge property", properties.iter().map(|(k, v)| (*k, v)))?;
 
         // Validate nodes exist
         if !self.has_node(source.0, source.1) {
@@ -1250,6 +1285,20 @@ impl ISONGraph {
     fn document(&self) -> IsonDocument {
         let mut doc = IsonDocument::new();
 
+        // Directedness is graph semantics: an undirected graph that reloads
+        // as directed silently changes traversal, degree and cycle results,
+        // and its two mirror rows become two distinct edges. Written only
+        // when it departs from the default so every directed graph keeps
+        // its bytes.
+        if !self.directed {
+            let mut block = IsonBlock::new("meta", "graph");
+            block.fields = vec!["directed".to_string()];
+            let mut row: HashMap<String, IsonValue> = HashMap::new();
+            row.insert("directed".to_string(), IsonValue::Bool(false));
+            block.rows.push(row);
+            doc.blocks.push(block);
+        }
+
         let mut node_types: Vec<_> = self.nodes.keys().collect();
         node_types.sort();
         for node_type in node_types {
@@ -1368,16 +1417,41 @@ impl ISONGraph {
     }
 
     fn build_from_document(doc: &IsonDocument, name: &str) -> Result<Self> {
-        let mut graph = ISONGraph::new(name);
-
+        // `meta.graph` carries graph semantics: `directed` (written by every
+        // port for an undirected graph) and `format` (written by the Python
+        // MultiGraph, which this port cannot represent).
+        let mut directed = true;
         for block in &doc.blocks {
-            if block.kind != "nodes" && block.kind != "edges" {
-                return Err(GraphError::ParseError(format!(
-                    "unknown block kind {:?} (expected 'nodes' or 'edges')",
-                    block.kind
-                )));
+            match block.kind.as_str() {
+                "nodes" | "edges" => {}
+                "meta" if block.name == "graph" => {
+                    for row in &block.rows {
+                        if let Some(IsonValue::String(format)) = row.get("format") {
+                            if format == MULTIGRAPH_FORMAT {
+                                return Err(GraphError::ParseError(format!(
+                                    "This is a {} document, which may contain multiple \
+                                     edges per (rel_type, source, target) triple; this \
+                                     port has no MultiGraph and would silently drop them.",
+                                    MULTIGRAPH_FORMAT
+                                )));
+                            }
+                        }
+                        if let Some(IsonValue::Bool(b)) = row.get("directed") {
+                            directed = *b;
+                        }
+                    }
+                }
+                other => {
+                    return Err(GraphError::ParseError(format!(
+                        "unknown block kind {:?} (expected 'nodes', 'edges' or 'meta')",
+                        other
+                    )))
+                }
             }
         }
+
+        let mut graph = ISONGraph::new(name);
+        graph.directed = directed;
 
         // Nodes first regardless of block order - the canonical writer sorts
         // blocks by name, which puts 'edges' ahead of 'nodes'.
@@ -1426,6 +1500,15 @@ impl ISONGraph {
                     .collect();
                 let borrowed: Vec<(&str, Value)> =
                     props.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
+                // An undirected graph serializes both an edge and the mirror
+                // it auto-created; re-adding the mirror would collide, so
+                // skip what is already reconstructed. A directed graph still
+                // fails on a genuine duplicate.
+                if !graph.directed
+                    && graph.has_edge(&block.name, (&source.0, &source.1), (&target.0, &target.1))
+                {
+                    continue;
+                }
                 graph.add_edge(
                     &block.name,
                     (&source.0, &source.1),
@@ -2741,5 +2824,99 @@ nodes.project|id budget name tag|p1 1250 Alpha "a\|b""#;
         let g = build_canonical_fixture(0);
         let reloaded = ISONGraph::from_ison(&g.to_ison(), None).unwrap();
         assert_eq!(reloaded.to_ison(), g.to_ison());
+    }
+
+    // =========================================================================
+    // Identity contract: directedness survives dump -> load, a Python
+    // MultiGraph document is refused rather than silently flattened, and a
+    // value the wire format cannot spell is refused before it enters the
+    // graph. UNDIRECTED_FIXTURE is the exact bytes the Python port writes
+    // for the same graph (string ids, so every port can represent it).
+    // =========================================================================
+
+    const UNDIRECTED_FIXTURE: &str = "edges.R\nsource target w\n:p:1 :p:2 1\n:p:2 :p:1 1\n\n\
+                                      meta.graph\ndirected\nfalse\n\n\
+                                      nodes.p\nid name\n\"1\" A\n\"2\" null";
+
+    fn build_undirected() -> ISONGraph {
+        let mut g = ISONGraph::undirected("u");
+        g.add_node("p", "1", props![("name", "A")]).unwrap();
+        g.add_node("p", "2", props![]).unwrap();
+        g.add_edge("R", ("p", "1"), ("p", "2"), props![("w", 1i64)]).unwrap();
+        g
+    }
+
+    #[test]
+    fn test_undirected_writes_meta_and_matches_python_bytes() {
+        assert_eq!(build_undirected().to_ison(), UNDIRECTED_FIXTURE);
+    }
+
+    #[test]
+    fn test_directed_output_has_no_meta_block() {
+        assert!(!build_canonical_fixture(0).to_ison().contains("meta.graph"));
+        assert!(!build_canonical_fixture(0).to_isonl().contains("meta.graph"));
+    }
+
+    #[test]
+    fn test_undirected_roundtrip() {
+        let g = build_undirected();
+        let r = ISONGraph::from_ison(&g.to_ison(), None).unwrap();
+        assert!(!r.directed);
+        assert_eq!(r.edge_count(), g.edge_count());
+        assert!(r.has_edge("R", ("p", "1"), ("p", "2")));
+        assert!(r.has_edge("R", ("p", "2"), ("p", "1")));
+        assert_eq!(r.to_ison(), g.to_ison());
+
+        let rl = ISONGraph::from_isonl(&g.to_isonl(), None).unwrap();
+        assert!(!rl.directed);
+        assert_eq!(rl.to_isonl(), g.to_isonl());
+    }
+
+    #[test]
+    fn test_directed_duplicate_row_still_fails() {
+        let text = "edges.R\nsource target\n:p:1 :p:2\n:p:1 :p:2\n\nnodes.p\nid\n\"1\"\n\"2\"";
+        assert!(matches!(
+            ISONGraph::from_ison(text, None),
+            Err(GraphError::DuplicateEdge(_))
+        ));
+    }
+
+    #[test]
+    fn test_explicit_directed_true_is_honoured() {
+        let g = ISONGraph::from_ison("meta.graph\ndirected\ntrue\n\nnodes.p\nid\n\"1\"", None).unwrap();
+        assert!(g.directed);
+    }
+
+    #[test]
+    fn test_multigraph_document_is_refused() {
+        let text = "meta.graph\ndirected format version\ntrue ison-graph-multigraph-v1 1\n\n\
+                    nodes.p\nid\n\"1\"";
+        match ISONGraph::from_ison(text, None) {
+            Err(GraphError::ParseError(msg)) => assert!(msg.contains("MultiGraph"), "{}", msg),
+            other => panic!("expected ParseError, got {:?}", other.map(|_| ())),
+        }
+    }
+
+    #[test]
+    fn test_non_finite_float_properties_are_refused() {
+        let mut g = ISONGraph::new("t");
+        assert!(matches!(
+            g.add_node("p", "1", props![("x", f64::NAN)]),
+            Err(GraphError::InvalidPropertyValue(_))
+        ));
+        g.add_node("p", "1", props![]).unwrap();
+        g.add_node("p", "2", props![]).unwrap();
+        assert!(matches!(
+            g.update_node("p", "1", props![("x", f64::INFINITY)]),
+            Err(GraphError::InvalidPropertyValue(_))
+        ));
+        assert!(g.get_node("p", "1").unwrap().properties.is_empty());
+        assert!(matches!(
+            g.add_edge("R", ("p", "1"), ("p", "2"), props![("w", f64::NEG_INFINITY)]),
+            Err(GraphError::InvalidPropertyValue(_))
+        ));
+        assert_eq!(g.edge_count(), 0);
+        // Finite floats are untouched.
+        g.add_edge("R", ("p", "1"), ("p", "2"), props![("w", 1.5f64)]).unwrap();
     }
 }

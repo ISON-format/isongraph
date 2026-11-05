@@ -221,9 +221,28 @@ public sealed partial class ISONGraph
     /// the id column was written unquoted, so a node id containing a space
     /// produced output that would not reparse.
     /// </remarks>
+    /// <summary>
+    /// Written into <c>meta.graph</c> by the Python <c>MultiGraph</c>. This
+    /// port has no multigraph, so loading such a document would silently drop
+    /// its parallel edges; it is refused instead.
+    /// </summary>
+    public const string MultigraphFormat = "ison-graph-multigraph-v1";
+
     private Document BuildDocument()
     {
         var doc = new Document();
+
+        // Directedness is graph semantics: an undirected graph that reloads as
+        // directed silently changes traversal, degree and cycle results, and
+        // its two mirror rows become two distinct edges. Written only when it
+        // departs from the default so every directed graph keeps its bytes.
+        if (!Directed)
+        {
+            var meta = new Block("meta", "graph");
+            meta.Fields.Add("directed");
+            meta.Rows.Add(new Dictionary<string, object?> { ["directed"] = false });
+            doc.Blocks.Add(meta);
+        }
 
         var nodeTypes = new List<string>(_nodeTypeOrder);
         nodeTypes.Sort(OrdinalComparer);
@@ -311,14 +330,32 @@ public sealed partial class ISONGraph
 
     private static ISONGraph BuildFromDocument(Document doc, string name)
     {
-        var graph = new ISONGraph(name);
-
+        // meta.graph carries graph semantics: 'directed' (written by every
+        // port for an undirected graph) and 'format' (written by the Python
+        // MultiGraph, which this port cannot represent).
+        var directed = true;
         foreach (var block in doc.Blocks)
         {
-            if (block.Kind != "nodes" && block.Kind != "edges")
-                throw new GraphError(
-                    $"unknown block kind '{block.Kind}' (expected 'nodes' or 'edges')");
+            if (block.Kind == "nodes" || block.Kind == "edges") continue;
+            if (block.Kind == "meta" && block.Name == "graph")
+            {
+                foreach (var row in block.Rows)
+                {
+                    if (row.TryGetValue("format", out var format) && format is string f && f == MultigraphFormat)
+                        throw new GraphError(
+                            $"This is a {MultigraphFormat} document, which may contain multiple edges " +
+                            "per (relType, source, target) triple; this port has no MultiGraph and " +
+                            "would silently drop them.");
+                    if (row.TryGetValue("directed", out var d) && d is bool b)
+                        directed = b;
+                }
+                continue;
+            }
+            throw new GraphError(
+                $"unknown block kind '{block.Kind}' (expected 'nodes', 'edges' or 'meta')");
         }
+
+        var graph = new ISONGraph(name, directed);
 
         // Nodes first regardless of block order - the canonical writer sorts
         // blocks by name, which puts 'edges' ahead of 'nodes'.
@@ -373,6 +410,12 @@ public sealed partial class ISONGraph
                         throw new GraphError(
                             $"Invalid node reference: :{end.Type}:{end.Id} has not been defined");
                 }
+                // An undirected graph serializes both an edge and the mirror it
+                // auto-created; re-adding the mirror would collide, so skip what
+                // is already reconstructed. A directed graph still fails on a
+                // genuine duplicate.
+                if (!graph.Directed && graph.HasEdge(block.Name, sourceRef, targetRef))
+                    continue;
                 try
                 {
                     graph.AddEdge(block.Name, sourceRef, targetRef, props);

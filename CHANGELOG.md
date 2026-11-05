@@ -10,10 +10,9 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Four ways a graph's meaning changed between `dump` and `load`, found while
 auditing Core as the identity base for ISONGraphExt. Each is fixed in
-Python, JavaScript and TypeScript, with the same tests in all three. A
-directed graph's serialized bytes are unchanged, so the cross-port golden
-still holds; only the cases that were already broken produce different
-output.
+every port where it applies, with the same tests in each. A directed
+graph's serialized bytes are unchanged, so the cross-port golden still
+holds; only the cases that were already broken produce different output.
 
 ### Fixed
 
@@ -53,13 +52,23 @@ output.
   graph. `update_node` also validates property *names* now, closing a gap
   that let a dotted or `#`-prefixed name in through the back door.
 
-### Not yet in Rust, C# and C++
+### Rust, C# and C++
 
-Those ports store every node id as a string, so the negative-id and
-id-type changes have no equivalent there yet, and they do not emit
-`meta.graph` for an undirected graph. An undirected graph written by
-Python/JS/TS and read by Rust/C#/C++ loads as directed, as it did before
-this change. Aligning them is the next parity item.
+These three ports now agree with the others on everything above that
+their ids allow. An undirected graph writes and reads `meta.graph`, so
+the Python-written undirected fixture is byte-identical in all six
+ports and loads back undirected in each. A document written by the
+Python `MultiGraph` is refused with a message naming it - it used to
+fail as an "unknown block kind", as did any file carrying `meta.graph`.
+Non-finite floats are refused on `add_node`, `add_edge` and
+`update_node` (`InvalidPropertyValue` in Rust, `ArgumentException` in
+C#, `std::invalid_argument` in C++), and `update_node` validates
+property names as the other ports do.
+
+What remains is that node ids are strings in these ports, so `1` and
+`"1"` are one node there and two elsewhere, and the negative-id and
+id-type changes have no equivalent. That is the next parity item, and
+a breaking one.
 
 ## [1.4.0] — 2026-09-05
 
