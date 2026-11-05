@@ -1,0 +1,5 @@
+edges.R|source target w|:p:1 :p:2 1
+edges.R|source target w|:p:2 :p:1 1
+meta.graph|directed|false
+nodes.p|id|1
+nodes.p|id|2

@@ -1,0 +1,8 @@
+nodes.p
+name id
+Bob 2
+Alice 1
+
+edges.R
+target source
+:p:2 :p:1

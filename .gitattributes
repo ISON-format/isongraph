@@ -11,3 +11,6 @@
 *.jpg binary
 *.gif binary
 *.ico binary
+
+# Conformance vectors are compared byte-for-byte by every port's test suite
+vectors/** text eol=lf
