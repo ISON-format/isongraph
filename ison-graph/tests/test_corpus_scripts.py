@@ -58,3 +58,51 @@ def test_real_corpus_digest_is_stable_across_two_calls():
     d1 = digest_mod.corpus_digest(ROOT / "vectors")
     d2 = digest_mod.corpus_digest(ROOT / "vectors")
     assert d1 == d2 and len(d1) == 64
+
+
+receipt_mod = _import("corpus_receipt")
+
+
+@pytest.mark.parametrize("cells,runner,expected", [
+    (["pass", "reject:X", "pass:canonicalized"], True, "FULL"),
+    (["pass", "pass:lossy"], True, "LOSSY_KNOWN"),
+    (["pass", "defect"], True, "KNOWN_DEFECT"),
+    (["pass:lossy", "defect"], True, "KNOWN_DEFECT"),
+    (["todo", "todo"], False, "PARTIAL"),
+    (["pass", "todo"], True, "INCONCLUSIVE"),
+    (["pass"], False, "INCONCLUSIVE"),
+])
+def test_posture(cells, runner, expected):
+    assert receipt_mod.posture(cells, runner) == expected
+
+
+def test_receipt_for_python_is_full_and_counts_add_up():
+    r = receipt_mod.build_receipt(ROOT, "python")
+    assert r["port"] == "python"
+    assert r["core_format"] == "isongraph"
+    assert r["semantic_spec"] == "ISONGraph-Semantic/2-draft"
+    assert r["corpus_version"] == 1
+    assert len(r["corpus_digest"]) == 64
+    assert re.fullmatch(r"[0-9a-f]{40}", r["core_commit"])
+    assert re.fullmatch(r"[0-9a-f]{40}", r["corpus_commit"])
+    assert r["posture"] == "FULL"
+    assert r["total"] == r["pass"] + r["canonicalized"] + r["lossy"] + r["defect"] + r["rejected_as_expected"] + r["todo"]
+    assert r["todo"] == 0
+
+
+def test_receipt_for_ts_is_known_defect():
+    r = receipt_mod.build_receipt(ROOT, "ts")
+    assert r["posture"] == "KNOWN_DEFECT"
+    assert r["defect"] >= 1 and r["lossy"] >= 1
+
+
+def test_receipt_for_rust_is_partial():
+    r = receipt_mod.build_receipt(ROOT, "rust")
+    assert r["posture"] == "PARTIAL" and r["todo"] == r["total"]
+
+
+def test_receipt_cli_prints_ison(capsys):
+    assert receipt_mod.main(["corpus_receipt.py", "--port", "python"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("meta.core_conformance_receipt\n")
+    assert " FULL" in out
