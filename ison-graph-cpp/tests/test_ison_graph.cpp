@@ -946,6 +946,100 @@ TEST(roundtrip_preserves_canonical_form) {
     assert(reloaded.toIson() == g.toIson());
 }
 
+
+// =============================================================================
+// Identity contract: directedness survives dump -> load, a Python MultiGraph
+// document is refused rather than silently flattened, and a value the wire
+// format cannot spell is refused before it enters the graph.
+// UNDIRECTED_FIXTURE is the exact bytes the Python port writes for the same
+// graph (string ids, so every port can represent it).
+// =============================================================================
+
+static const char* UNDIRECTED_FIXTURE =
+    "edges.R\nsource target w\n:p:1 :p:2 1\n:p:2 :p:1 1\n\n"
+    "meta.graph\ndirected\nfalse\n\n"
+    "nodes.p\nid name\n\"1\" A\n\"2\" null";
+
+static ISONGraph buildUndirected() {
+    ISONGraph g("u", false);
+    g.addNode("p", "1", {{"name", ison::Value("A")}});
+    g.addNode("p", "2");
+    g.addEdge("R", {"p", "1"}, {"p", "2"}, {{"w", ison::Value(1)}});
+    return g;
+}
+
+TEST(undirected_writes_meta_and_matches_python_bytes) {
+    assert(buildUndirected().toIson() == UNDIRECTED_FIXTURE);
+}
+
+TEST(directed_output_has_no_meta_block) {
+    assert(buildCanonicalFixture(0).toIson().find("meta.graph") == std::string::npos);
+    assert(buildCanonicalFixture(0).toIsonl().find("meta.graph") == std::string::npos);
+}
+
+TEST(undirected_roundtrip) {
+    ISONGraph g = buildUndirected();
+    ISONGraph r = ISONGraph::fromIson(g.toIson());
+    assert(!r.directed);
+    assert(r.edgeCount() == g.edgeCount());
+    assert(r.hasEdge("R", {"p", "1"}, {"p", "2"}));
+    assert(r.hasEdge("R", {"p", "2"}, {"p", "1"}));
+    assert(r.toIson() == g.toIson());
+
+    ISONGraph rl = ISONGraph::fromIsonl(g.toIsonl());
+    assert(!rl.directed);
+    assert(rl.toIsonl() == g.toIsonl());
+}
+
+TEST(directed_duplicate_row_still_throws) {
+    bool thrown = false;
+    try {
+        ISONGraph::fromIson("edges.R\nsource target\n:p:1 :p:2\n:p:1 :p:2\n\nnodes.p\nid\n\"1\"\n\"2\"");
+    } catch (const DuplicateEdgeError&) {
+        thrown = true;
+    }
+    assert(thrown);
+}
+
+TEST(explicit_directed_true_is_honoured) {
+    assert(ISONGraph::fromIson("meta.graph\ndirected\ntrue\n\nnodes.p\nid\n\"1\"").directed);
+}
+
+TEST(multigraph_document_is_refused) {
+    bool refused = false;
+    try {
+        ISONGraph::fromIson("meta.graph\ndirected format version\ntrue ison-graph-multigraph-v1 1\n\nnodes.p\nid\n\"1\"");
+    } catch (const GraphError& e) {
+        refused = std::string(e.what()).find("MultiGraph") != std::string::npos;
+    }
+    assert(refused);
+}
+
+TEST(non_finite_float_properties_are_refused) {
+    ISONGraph g("t");
+    bool thrown = false;
+    try { g.addNode("p", "1", {{"x", ison::Value(std::nan(""))}}); }
+    catch (const std::invalid_argument&) { thrown = true; }
+    assert(thrown);
+
+    g.addNode("p", "1");
+    g.addNode("p", "2");
+    thrown = false;
+    try { g.updateNode("p", "1", {{"x", ison::Value(static_cast<double>(INFINITY))}}); }
+    catch (const std::invalid_argument&) { thrown = true; }
+    assert(thrown);
+    assert(g.getNode("p", "1").properties.empty());
+
+    thrown = false;
+    try { g.addEdge("R", {"p", "1"}, {"p", "2"}, {{"w", ison::Value(static_cast<double>(-INFINITY))}}); }
+    catch (const std::invalid_argument&) { thrown = true; }
+    assert(thrown);
+    assert(g.edgeCount() == 0);
+
+    // Finite floats are untouched.
+    g.addEdge("R", {"p", "1"}, {"p", "2"}, {{"w", ison::Value(1.5)}});
+}
+
 // =============================================================================
 // Main
 // =============================================================================
@@ -1034,6 +1128,15 @@ int main() {
     RUN_TEST(to_isonl_matches_golden_fixture);
     RUN_TEST(ordinal_not_numeric_sort);
     RUN_TEST(roundtrip_preserves_canonical_form);
+
+    // Identity contract
+    RUN_TEST(undirected_writes_meta_and_matches_python_bytes);
+    RUN_TEST(directed_output_has_no_meta_block);
+    RUN_TEST(undirected_roundtrip);
+    RUN_TEST(directed_duplicate_row_still_throws);
+    RUN_TEST(explicit_directed_true_is_honoured);
+    RUN_TEST(multigraph_document_is_refused);
+    RUN_TEST(non_finite_float_properties_are_refused);
 
     std::cout << "\n=== Results ===\n";
     std::cout << "Total: " << total << ", Passed: " << (total - failed)

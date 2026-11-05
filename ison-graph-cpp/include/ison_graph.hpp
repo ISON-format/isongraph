@@ -67,6 +67,7 @@
 #include <fstream>
 #include <tuple>
 #include <regex>
+#include <cmath>
 
 namespace ison_graph {
 
@@ -112,6 +113,13 @@ struct NodeRefHash {
 /// port emit every value quoted and disagree with the typed ports; the
 /// parser already models exactly the types the format has, so it owns them.
 using Properties = std::map<std::string, ison::Value>;
+
+/**
+ * Written into meta.graph by the Python MultiGraph. This port has no
+ * multigraph, so loading such a document would silently drop its parallel
+ * edges; it is refused instead.
+ */
+inline constexpr const char* MULTIGRAPH_FORMAT = "ison-graph-multigraph-v1";
 
 /// Render a property as text - the form every value had before properties
 /// carried types. Query string operators, schema validation and the
@@ -288,6 +296,7 @@ public:
         checkIdentifier("Node type", nodeType);
         checkIdentifier("Node id", nodeId);
         checkPropertyNames("Node property", properties);
+        checkPropertyValues("Node property", properties);
         auto& typeNodes = nodes_[nodeType];
         if (typeNodes.find(nodeId) != typeNodes.end()) {
             throw DuplicateNodeError(NodeRef(nodeType, nodeId));
@@ -384,6 +393,8 @@ public:
     /** Update node properties */
     void updateNode(const std::string& nodeType, const std::string& nodeId,
                     const Properties& properties) {
+        checkPropertyNames("Node property", properties);
+        checkPropertyValues("Node property", properties);
         Node& node = getNode(nodeType, nodeId);
         for (const auto& [k, v] : properties) {
             node.properties[k] = v;
@@ -451,6 +462,7 @@ public:
                  const Properties& properties = {}) {
         checkIdentifier("Relationship type", relType);
         checkPropertyNames("Edge property", properties);
+        checkPropertyValues("Edge property", properties);
 
         if (!hasNode(source)) {
             throw NodeNotFoundError(source);
@@ -914,6 +926,20 @@ public:
     ison::Document buildDocument() const {
         ison::Document doc;
 
+        // Directedness is graph semantics: an undirected graph that reloads
+        // as directed silently changes traversal, degree and cycle results,
+        // and its two mirror rows become two distinct edges. Written only
+        // when it departs from the default so every directed graph keeps
+        // its bytes.
+        if (!directed) {
+            ison::Block meta("meta", "graph");
+            meta.fields.push_back("directed");
+            ison::Row row;
+            row["directed"] = ison::Value(false);
+            meta.rows.push_back(row);
+            doc.blocks.push_back(meta);
+        }
+
         std::vector<std::string> nodeTypes;
         for (auto it = nodes_.begin(); it != nodes_.end(); ++it) {
             nodeTypes.push_back(it->first);
@@ -1239,17 +1265,53 @@ public:
         return false;
     }
 
-    static ISONGraph buildFromDocument(const ison::Document& doc,
-                                       const std::string& graphName) {
-        ISONGraph graph(graphName);
-
-        for (size_t b = 0; b < doc.blocks.size(); ++b) {
-            const ison::Block& block = doc.blocks[b];
-            if (block.kind != "nodes" && block.kind != "edges") {
-                throw GraphError("unknown block kind '" + block.kind +
-                                 "' (expected 'nodes' or 'edges')");
+    /**
+     * Reject property values that change type on a round trip. ISON has no
+     * spelling for a non-finite float: NaN and infinity are written bare and
+     * read back as the *strings* "nan" / "inf".
+     */
+    static void checkPropertyValues(const std::string& kind, const Properties& properties) {
+        for (const auto& [name, value] : properties) {
+            if (value.is_float() && !std::isfinite(value.as_float())) {
+                throw std::invalid_argument(
+                    kind + " '" + name + "' cannot be encoded: a float must be finite "
+                    "(NaN and infinity are read back as strings).");
             }
         }
+    }
+
+    static ISONGraph buildFromDocument(const ison::Document& doc,
+                                       const std::string& graphName) {
+        // meta.graph carries graph semantics: 'directed' (written by every
+        // port for an undirected graph) and 'format' (written by the Python
+        // MultiGraph, which this port cannot represent).
+        bool directed = true;
+        for (size_t b = 0; b < doc.blocks.size(); ++b) {
+            const ison::Block& block = doc.blocks[b];
+            if (block.kind == "nodes" || block.kind == "edges") continue;
+            if (block.kind == "meta" && block.name == "graph") {
+                for (size_t r = 0; r < block.rows.size(); ++r) {
+                    const ison::Row& row = block.rows[r];
+                    ison::Row::const_iterator f = row.find("format");
+                    if (f != row.end() && f->second.is_string() &&
+                        f->second.as_string() == MULTIGRAPH_FORMAT) {
+                        throw GraphError(std::string("This is a ") + MULTIGRAPH_FORMAT +
+                                         " document, which may contain multiple edges per "
+                                         "(relType, source, target) triple; this port has no "
+                                         "MultiGraph and would silently drop them.");
+                    }
+                    ison::Row::const_iterator d = row.find("directed");
+                    if (d != row.end() && d->second.is_bool()) {
+                        directed = d->second.as_bool();
+                    }
+                }
+                continue;
+            }
+            throw GraphError("unknown block kind '" + block.kind +
+                             "' (expected 'nodes', 'edges' or 'meta')");
+        }
+
+        ISONGraph graph(graphName, directed);
 
         // Nodes first regardless of block order - the canonical writer sorts
         // blocks by name, which puts 'edges' ahead of 'nodes'.
@@ -1299,8 +1361,16 @@ public:
                     throw GraphError(
                         "fromIson: Invalid node reference: edge endpoint has no type");
                 }
-                graph.addEdge(block.name, NodeRef(sref.type.value(), sref.id),
-                              NodeRef(tref.type.value(), tref.id), props);
+                NodeRef sourceRef(sref.type.value(), sref.id);
+                NodeRef targetRef(tref.type.value(), tref.id);
+                // An undirected graph serializes both an edge and the mirror
+                // it auto-created; re-adding the mirror would collide, so
+                // skip what is already reconstructed. A directed graph still
+                // throws on a genuine duplicate.
+                if (!graph.directed && graph.hasEdge(block.name, sourceRef, targetRef)) {
+                    continue;
+                }
+                graph.addEdge(block.name, sourceRef, targetRef, props);
             }
         }
 

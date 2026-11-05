@@ -147,7 +147,7 @@ npm install ison-graph-ts
 
 ```toml
 [dependencies]
-ison-graph = "1.4.0"
+ison-graph = "1.4.1"
 ```
 
 ### C++

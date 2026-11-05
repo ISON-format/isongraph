@@ -634,3 +634,99 @@ public class CanonicalSerializationTests
         Assert.Equal(g.ToIson(), reloaded.ToIson());
     }
 }
+
+// =============================================================================
+// Identity contract: directedness survives dump -> load, a Python MultiGraph
+// document is refused rather than silently flattened, and a value the wire
+// format cannot spell is refused before it enters the graph.
+// UndirectedFixture is the exact bytes the Python port writes for the same
+// graph (string ids, so every port can represent it).
+// =============================================================================
+
+public class IdentityContractTests
+{
+    private const string UndirectedFixture =
+        "edges.R\nsource target w\n:p:1 :p:2 1\n:p:2 :p:1 1\n\n" +
+        "meta.graph\ndirected\nfalse\n\n" +
+        "nodes.p\nid name\n\"1\" A\n\"2\" null";
+
+    private static ISONGraph BuildUndirected()
+    {
+        var g = new ISONGraph("u", directed: false);
+        g.AddNode("p", "1", new Dictionary<string, object?> { ["name"] = "A" });
+        g.AddNode("p", "2");
+        g.AddEdge("R", new("p", "1"), new("p", "2"), new Dictionary<string, object?> { ["w"] = 1L });
+        return g;
+    }
+
+    [Fact]
+    public void UndirectedWritesMetaAndMatchesPythonBytes()
+    {
+        Assert.Equal(UndirectedFixture, BuildUndirected().ToIson());
+    }
+
+    [Fact]
+    public void DirectedOutputHasNoMetaBlock()
+    {
+        var g = new ISONGraph();
+        g.AddNode("p", "1");
+        Assert.DoesNotContain("meta.graph", g.ToIson());
+        Assert.DoesNotContain("meta.graph", g.ToIsonl());
+    }
+
+    [Fact]
+    public void UndirectedRoundTrip()
+    {
+        var g = BuildUndirected();
+        var r = ISONGraph.FromIson(g.ToIson());
+        Assert.False(r.Directed);
+        Assert.Equal(g.EdgeCount(), r.EdgeCount());
+        Assert.True(r.HasEdge("R", new("p", "1"), new("p", "2")));
+        Assert.True(r.HasEdge("R", new("p", "2"), new("p", "1")));
+        Assert.Equal(g.ToIson(), r.ToIson());
+
+        var rl = ISONGraph.FromIsonl(g.ToIsonl());
+        Assert.False(rl.Directed);
+        Assert.Equal(g.ToIsonl(), rl.ToIsonl());
+    }
+
+    [Fact]
+    public void DirectedDuplicateRowStillThrows()
+    {
+        const string text = "edges.R\nsource target\n:p:1 :p:2\n:p:1 :p:2\n\nnodes.p\nid\n\"1\"\n\"2\"";
+        var ex = Assert.Throws<GraphError>(() => ISONGraph.FromIson(text));
+        Assert.Contains("duplicate edge", ex.Message);
+    }
+
+    [Fact]
+    public void ExplicitDirectedTrueIsHonoured()
+    {
+        Assert.True(ISONGraph.FromIson("meta.graph\ndirected\ntrue\n\nnodes.p\nid\n\"1\"").Directed);
+    }
+
+    [Fact]
+    public void MultigraphDocumentIsRefused()
+    {
+        const string text = "meta.graph\ndirected format version\ntrue ison-graph-multigraph-v1 1\n\nnodes.p\nid\n\"1\"";
+        var ex = Assert.Throws<GraphError>(() => ISONGraph.FromIson(text));
+        Assert.Contains("MultiGraph", ex.Message);
+    }
+
+    [Fact]
+    public void NonFiniteFloatPropertiesAreRefused()
+    {
+        var g = new ISONGraph();
+        Assert.Throws<ArgumentException>(() =>
+            g.AddNode("p", "1", new Dictionary<string, object?> { ["x"] = double.NaN }));
+        g.AddNode("p", "1");
+        g.AddNode("p", "2");
+        Assert.Throws<ArgumentException>(() =>
+            g.UpdateNode("p", "1", new Dictionary<string, object?> { ["x"] = double.PositiveInfinity }));
+        Assert.Empty(g.GetNode("p", "1").Properties);
+        Assert.Throws<ArgumentException>(() =>
+            g.AddEdge("R", new("p", "1"), new("p", "2"), new Dictionary<string, object?> { ["w"] = double.NegativeInfinity }));
+        Assert.Equal(0, g.EdgeCount());
+        // Finite floats are untouched.
+        g.AddEdge("R", new("p", "1"), new("p", "2"), new Dictionary<string, object?> { ["w"] = 1.5 });
+    }
+}
