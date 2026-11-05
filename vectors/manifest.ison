@@ -1,0 +1,8 @@
+meta.corpus
+version semantic_spec
+1 "ISONGraph-Semantic/2-draft"
+
+table.vectors
+id file semantic reason directed nodes edges canonical digest python ts js rust cs cpp
+ids/positive-int ids/positive-int.ison identifiable null true 2 1 null null pass todo todo todo todo todo
+ids/twin-int-string ids/twin-int-string.ison out_of_domain AMBIGUOUS_NODE_REFERENCE true 0 0 null null "reject:DuplicateNodeError" todo todo todo todo todo
