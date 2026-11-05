@@ -546,3 +546,54 @@ class TestMultiEdge:
     def test_edge_id_is_a_stable_alias_for_the_integer_key(self, mg):
         edge = mg.get_edge("KNOWS", ("person", 1), ("person", 2), key=1)
         assert edge.edge_id == edge.key == 1
+
+
+# =============================================================================
+# Identity contract: references resolve against the node table, so a
+# negative integer id survives dump -> load, and non-finite floats are
+# refused on edges exactly as on the simple graph.
+# =============================================================================
+
+class TestMultiGraphIdentityContract:
+    def test_negative_int_id_roundtrip(self):
+        g = MultiGraph()
+        g.add_node("p", -1)
+        g.add_node("p", 2)
+        g.add_edge("R", ("p", -1), ("p", 2))
+        g.add_edge("R", ("p", -1), ("p", 2))
+        for restored in (MultiGraph.from_ison(g.to_ison()),
+                         MultiGraph.from_isonl(g.to_isonl())):
+            assert restored.has_node("p", -1)
+            assert restored.has_edge("R", ("p", -1), ("p", 2), 0)
+            assert restored.has_edge("R", ("p", -1), ("p", 2), 1)
+
+    def test_negative_string_id_stays_a_string(self):
+        g = MultiGraph()
+        g.add_node("p", "-1")
+        g.add_node("p", 2)
+        g.add_edge("R", ("p", "-1"), ("p", 2))
+        restored = MultiGraph.from_ison(g.to_ison())
+        assert restored.has_node("p", "-1")
+        assert restored.has_edge("R", ("p", "-1"), ("p", 2), 0)
+
+    def test_undirected_bytes_are_stable_across_reload(self):
+        g = MultiGraph(directed=False)
+        g.add_node("p", 1)
+        g.add_node("p", 2)
+        g.add_edge("R", ("p", 1), ("p", 2))
+        text = g.to_ison()
+        assert MultiGraph.from_ison(text).to_ison() == text
+
+    def test_add_edge_rejects_non_finite_float(self):
+        from ison_graph import InvalidPropertyValueError
+        g = MultiGraph()
+        g.add_node("p", 1)
+        g.add_node("p", 2)
+        with pytest.raises(InvalidPropertyValueError):
+            g.add_edge("R", ("p", 1), ("p", 2), w=float("nan"))
+        assert g.edge_count() == 0
+
+    def test_float_node_id_is_rejected(self):
+        g = MultiGraph()
+        with pytest.raises(InvalidIdentifierError):
+            g.add_node("p", 1.5)

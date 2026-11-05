@@ -11,6 +11,7 @@ from ison_graph import (
     DuplicateNodeError, DuplicateEdgeError,
     InvalidIdentifierError,
     InvalidPropertyNameError,
+    InvalidPropertyValueError,
 )
 
 
@@ -701,6 +702,190 @@ source target since
 
 
 # =============================================================================
+# Identity Contract Tests
+#
+# A graph's meaning must survive dump -> load unchanged: a node id keeps its
+# type and sign, an undirected graph stays undirected, and a value that the
+# wire format cannot spell is refused before it enters the graph rather than
+# changing type on reload. Each of these was reproduced live on 1.4.0:
+# :p:-1 raised NodeNotFoundError on reload (isdigit() drops the sign), an
+# undirected graph reloaded as directed with its mirror rows as two edges,
+# float/bool ids wrote fine and then no edge to them resolved, and NaN came
+# back as the string "nan".
+# =============================================================================
+
+class TestNodeIdDomain:
+    """Node ids are strings or signed integers, nothing else."""
+
+    @pytest.mark.parametrize("bad", [1.5, 1.0, -4.25, float('nan'), float('inf'), True, False, None])
+    def test_non_str_non_int_ids_are_rejected(self, bad):
+        graph = ISONGraph()
+        with pytest.raises(InvalidIdentifierError):
+            graph.add_node("p", bad)
+
+    @pytest.mark.parametrize("node_id", [-1, 0, 1, 2**63 - 1, -(2**63), "-1", "007", "x"])
+    def test_str_and_signed_int_ids_are_accepted(self, node_id):
+        graph = ISONGraph()
+        graph.add_node("p", node_id)
+        assert graph.has_node("p", node_id)
+
+    @pytest.mark.parametrize("first,second", [(1, "1"), ("1", 1), (-1, "-1"), ("-1", -1)])
+    def test_int_string_twins_are_rejected_with_sign(self, first, second):
+        graph = ISONGraph()
+        graph.add_node("p", first)
+        with pytest.raises(DuplicateNodeError):
+            graph.add_node("p", second)
+
+
+class TestNegativeIdRoundTrip:
+    """A negative integer id resolves from a reference after reload."""
+
+    @staticmethod
+    def _graph():
+        g = ISONGraph()
+        g.add_node("p", -1, name="neg")
+        g.add_node("p", 2)
+        g.add_edge("R", ("p", -1), ("p", 2))
+        g.add_edge("R", ("p", 2), ("p", -1))
+        return g
+
+    def test_ison(self):
+        restored = ISONGraph.from_ison(self._graph().to_ison())
+        assert restored.has_node("p", -1)
+        assert not restored.has_node("p", "-1")
+        assert restored.has_edge("R", ("p", -1), ("p", 2))
+        assert restored.has_edge("R", ("p", 2), ("p", -1))
+
+    def test_isonl(self):
+        restored = ISONGraph.from_isonl(self._graph().to_isonl())
+        assert restored.has_edge("R", ("p", -1), ("p", 2))
+
+    def test_bytes_are_stable_across_reload(self):
+        text = self._graph().to_ison()
+        assert ISONGraph.from_ison(text).to_ison() == text
+
+    def test_negative_string_id_stays_a_string(self):
+        """'-1' as a *string* id is quoted in the id column and resolves to
+        the string node, not to int -1, because the node table wins."""
+        g = ISONGraph()
+        g.add_node("p", "-1")
+        g.add_node("p", 2)
+        g.add_edge("R", ("p", "-1"), ("p", 2))
+        restored = ISONGraph.from_ison(g.to_ison())
+        assert restored.has_node("p", "-1")
+        assert restored.has_edge("R", ("p", "-1"), ("p", 2))
+
+    def test_query_pattern_accepts_negative_id(self):
+        g = self._graph()
+        assert g.query(":p:-1 -[:R]-> *") == [("p", 2)]
+
+
+class TestDirectednessRoundTrip:
+    """Undirected graphs persist their directedness; directed ones keep
+    their 1.4.0 bytes."""
+
+    def test_directed_output_is_unchanged(self):
+        g = ISONGraph()
+        g.add_node("p", 1)
+        g.add_node("p", 2)
+        g.add_edge("R", ("p", 1), ("p", 2))
+        assert "meta.graph" not in g.to_ison()
+        assert "meta.graph" not in g.to_isonl()
+
+    def test_undirected_reloads_undirected(self):
+        g = ISONGraph(directed=False)
+        g.add_node("p", 1)
+        g.add_node("p", 2)
+        g.add_edge("R", ("p", 1), ("p", 2), w=1)
+
+        text = g.to_ison()
+        assert "meta.graph" in text
+        restored = ISONGraph.from_ison(text)
+        assert restored.directed is False
+        # One logical edge, stored as its two mirrors - same as before dump.
+        assert restored.edge_count() == g.edge_count() == 2
+        assert restored.has_edge("R", ("p", 1), ("p", 2))
+        assert restored.has_edge("R", ("p", 2), ("p", 1))
+        assert restored.get_edge("R", ("p", 2), ("p", 1)).properties == {"w": 1}
+
+    def test_undirected_isonl_roundtrip(self):
+        g = ISONGraph(directed=False)
+        g.add_node("p", 1)
+        g.add_node("p", 2)
+        g.add_edge("R", ("p", 1), ("p", 2))
+        restored = ISONGraph.from_isonl(g.to_isonl())
+        assert restored.directed is False
+        assert restored.edge_count() == 2
+
+    def test_undirected_bytes_are_stable_across_reload(self):
+        g = ISONGraph(directed=False)
+        g.add_node("p", 1)
+        g.add_node("p", 2)
+        g.add_edge("R", ("p", 1), ("p", 2))
+        text = g.to_ison()
+        assert ISONGraph.from_ison(text).to_ison() == text
+
+    def test_directed_and_undirected_no_longer_collide(self):
+        """{A->B, B->A} directed and {A-B} undirected used to serialize to
+        the same bytes, so no identity built on them could tell them apart."""
+        d = ISONGraph(directed=True)
+        u = ISONGraph(directed=False)
+        for g in (d, u):
+            g.add_node("p", 1)
+            g.add_node("p", 2)
+        d.add_edge("R", ("p", 1), ("p", 2))
+        d.add_edge("R", ("p", 2), ("p", 1))
+        u.add_edge("R", ("p", 1), ("p", 2))
+        assert d.to_ison() != u.to_ison()
+
+    def test_directed_duplicate_rows_still_raise(self):
+        text = "edges.R\nsource target\n:p:1 :p:2\n:p:1 :p:2\n\nnodes.p\nid\n1\n2"
+        with pytest.raises(DuplicateEdgeError):
+            ISONGraph.from_ison(text)
+
+    def test_explicit_directed_true_is_honoured(self):
+        text = "meta.graph\ndirected\ntrue\n\nnodes.p\nid\n1"
+        assert ISONGraph.from_ison(text).directed is True
+
+
+class TestPropertyValueDomain:
+    """Non-finite floats have no ISON spelling and are refused."""
+
+    @pytest.mark.parametrize("bad", [float('nan'), float('inf'), float('-inf')])
+    def test_add_node_rejects(self, bad):
+        graph = ISONGraph()
+        with pytest.raises(InvalidPropertyValueError):
+            graph.add_node("p", 1, x=bad)
+
+    @pytest.mark.parametrize("bad", [float('nan'), float('inf')])
+    def test_add_edge_rejects(self, bad):
+        graph = ISONGraph()
+        graph.add_node("p", 1)
+        graph.add_node("p", 2)
+        with pytest.raises(InvalidPropertyValueError):
+            graph.add_edge("R", ("p", 1), ("p", 2), w=bad)
+
+    def test_update_node_rejects(self):
+        graph = ISONGraph()
+        graph.add_node("p", 1)
+        with pytest.raises(InvalidPropertyValueError):
+            graph.update_node("p", 1, x=float('nan'))
+        assert graph.get_node("p", 1).properties == {}
+
+    def test_finite_floats_and_big_ints_still_roundtrip(self):
+        graph = ISONGraph()
+        graph.add_node("p", 1, a=1.5, b=-0.0, c=2**63 - 1, d=10**20, e=1.0)
+        restored = ISONGraph.from_ison(graph.to_ison())
+        props = restored.get_node("p", 1).properties
+        assert props == {"a": 1.5, "b": -0.0, "c": 2**63 - 1, "d": 10**20, "e": 1.0}
+        assert isinstance(props["e"], float)
+
+    def test_error_is_a_graph_error(self):
+        from ison_graph import GraphError
+        assert issubclass(InvalidPropertyValueError, GraphError)
+
+
+# =============================================================================
 # Canonical Serialization Tests
 #
 # to_ison()/to_isonl() must be byte-identical for the same logical graph
@@ -1062,3 +1247,34 @@ class TestFromDictDuplicateEdges:
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
+
+class TestSubmoduleImports:
+    """`from ison_graph import <submodule>` has to work.
+
+    The lazy __getattr__ used `from . import <name>`, which probes the package
+    with hasattr, re-entering __getattr__ for the same name until the stack ran
+    out. Every doc example happened to use `from ison_graph.schema import ...`,
+    which goes through the import machinery instead and never touched it, so
+    the whole lazy path was broken from 1.0.0 with nothing to notice.
+    """
+
+    @pytest.mark.parametrize(
+        "name", ["query", "schema", "multigraph", "structural"]
+    )
+    def test_submodule_is_importable_from_the_package(self, name):
+        import importlib
+
+        pkg = importlib.import_module("ison_graph")
+        # drop any cached attribute so __getattr__ actually runs
+        if hasattr(pkg, name):
+            delattr(pkg, name)
+
+        module = getattr(pkg, name)
+        assert module.__name__ == f"ison_graph.{name}"
+
+    def test_unknown_attribute_raises_attribute_error(self):
+        import ison_graph
+
+        with pytest.raises(AttributeError, match="no attribute"):
+            ison_graph.definitely_not_a_submodule

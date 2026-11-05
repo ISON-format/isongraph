@@ -56,6 +56,7 @@ from . import (
     ISONGraph,
     NodeNotFoundError,
     NodeRef,
+    _resolve_ref,
 )
 
 #: (rel_type, source, target, key)
@@ -198,6 +199,7 @@ class MultiGraph(ISONGraph):
         """
         self._check_identifier('Relationship type', rel_type)
         self._check_property_names('Edge property', properties)
+        self._check_property_values('Edge property', properties)
 
         if key is not None and (isinstance(key, bool) or not isinstance(key, int)
                                 or key < 0):
@@ -476,12 +478,13 @@ class MultiGraph(ISONGraph):
                         if k not in ("source", "target", "key")
                     }
 
+                    # Resolve against the loaded nodes rather than the text:
+                    # a reference cannot tell "1" from 1, and a bare
+                    # isdigit() test lost the sign of a negative id.
                     if isinstance(source, Reference):
-                        source = (source.type,
-                                  int(source.id) if source.id.isdigit() else source.id)
+                        source = _resolve_ref(graph, source)
                     if isinstance(target, Reference):
-                        target = (target.type,
-                                  int(target.id) if target.id.isdigit() else target.id)
+                        target = _resolve_ref(graph, target)
 
                     key = int(row.get("key", 0))
                     # An undirected graph serializes both an edge and the

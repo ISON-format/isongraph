@@ -89,3 +89,7 @@ disallow_untyped_defs = true
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --tb=short"
+# Test the working tree, not whatever copy happens to be installed. Without
+# this a non-editable install of ison-graph shadows src/ and the suite passes
+# against code that is not the code being edited.
+pythonpath = ["src"]

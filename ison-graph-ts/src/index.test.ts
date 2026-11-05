@@ -16,6 +16,7 @@ import {
   DuplicateNodeError,
   DuplicateEdgeError,
   InvalidIdentifierError,
+  InvalidPropertyValueError,
   type Properties,
 } from './index';
 
@@ -653,6 +654,175 @@ describe('Identifier Validation', () => {
     const restored = ISONGraph.fromIson(g.toIson());
     expect(restored.nodeCount()).toBe(3);
     expect(restored.edgeCount()).toBe(1);
+  });
+});
+
+// =============================================================================
+// Identity contract: a graph's meaning survives dump -> load unchanged. A
+// node id keeps its type and sign, an undirected graph stays undirected,
+// and a value the wire format cannot spell is refused before it enters the
+// graph rather than changing type on reload.
+// =============================================================================
+
+describe('Identity Contract', () => {
+  describe('node id domain', () => {
+    it.each([1.5, -4.25, NaN, Infinity, true, false, null, undefined])(
+      'rejects %s as a node id', (bad) => {
+        expect(() => new ISONGraph().addNode('p', bad as any)).toThrow(InvalidIdentifierError);
+      });
+
+    it.each([-1, 0, 1, Number.MAX_SAFE_INTEGER, '-1', '007', 'x'])(
+      'accepts %s as a node id', (id) => {
+        const g = new ISONGraph();
+        g.addNode('p', id);
+        expect(g.hasNode('p', id)).toBe(true);
+      });
+
+    it.each([[1, '1'], ['1', 1], [-1, '-1'], ['-1', -1]])(
+      'rejects the int/string twin of %s', (first, second) => {
+        const g = new ISONGraph();
+        g.addNode('p', first);
+        expect(() => g.addNode('p', second)).toThrow(DuplicateNodeError);
+      });
+  });
+
+  describe('negative integer ids', () => {
+    const build = () => {
+      const g = new ISONGraph();
+      g.addNode('p', -1, { name: 'neg' });
+      g.addNode('p', 2);
+      g.addEdge('R', ['p', -1], ['p', 2]);
+      g.addEdge('R', ['p', 2], ['p', -1]);
+      return g;
+    };
+
+    it('round-trip through ISON', () => {
+      const restored = ISONGraph.fromIson(build().toIson());
+      expect(restored.hasNode('p', -1)).toBe(true);
+      expect(restored.hasNode('p', '-1')).toBe(false);
+      expect(restored.hasEdge('R', ['p', -1], ['p', 2])).toBe(true);
+      expect(restored.hasEdge('R', ['p', 2], ['p', -1])).toBe(true);
+    });
+
+    it('round-trip through ISONL', () => {
+      const restored = ISONGraph.fromIsonl(build().toIsonl());
+      expect(restored.hasEdge('R', ['p', -1], ['p', 2])).toBe(true);
+    });
+
+    it('produce stable bytes across reload', () => {
+      const text = build().toIson();
+      expect(ISONGraph.fromIson(text).toIson()).toBe(text);
+    });
+
+    it('keep a negative *string* id a string', () => {
+      const g = new ISONGraph();
+      g.addNode('p', '-1');
+      g.addNode('p', 2);
+      g.addEdge('R', ['p', '-1'], ['p', 2]);
+      const restored = ISONGraph.fromIson(g.toIson());
+      expect(restored.hasNode('p', '-1')).toBe(true);
+      expect(restored.hasEdge('R', ['p', '-1'], ['p', 2])).toBe(true);
+    });
+
+    it('resolve in a query pattern', () => {
+      expect(build().query(':p:-1 -[:R]-> *')).toEqual([['p', 2]]);
+    });
+  });
+
+  describe('directedness', () => {
+    it('leaves directed output unchanged', () => {
+      const g = new ISONGraph();
+      g.addNode('p', 1);
+      g.addNode('p', 2);
+      g.addEdge('R', ['p', 1], ['p', 2]);
+      expect(g.toIson()).not.toContain('meta.graph');
+      expect(g.toIsonl()).not.toContain('meta.graph');
+    });
+
+    it('reloads an undirected graph as undirected', () => {
+      const g = new ISONGraph('u', false);
+      g.addNode('p', 1);
+      g.addNode('p', 2);
+      g.addEdge('R', ['p', 1], ['p', 2], { w: 1 });
+
+      const text = g.toIson();
+      expect(text).toContain('meta.graph');
+      const restored = ISONGraph.fromIson(text);
+      expect(restored.directed).toBe(false);
+      expect(restored.edgeCount()).toBe(g.edgeCount());
+      expect(restored.hasEdge('R', ['p', 1], ['p', 2])).toBe(true);
+      expect(restored.hasEdge('R', ['p', 2], ['p', 1])).toBe(true);
+      expect(restored.getEdge('R', ['p', 2], ['p', 1]).properties).toEqual({ w: 1 });
+    });
+
+    it('reloads an undirected graph from ISONL', () => {
+      const g = new ISONGraph('u', false);
+      g.addNode('p', 1);
+      g.addNode('p', 2);
+      g.addEdge('R', ['p', 1], ['p', 2]);
+      const restored = ISONGraph.fromIsonl(g.toIsonl());
+      expect(restored.directed).toBe(false);
+      expect(restored.edgeCount()).toBe(g.edgeCount());
+    });
+
+    it('produces stable undirected bytes across reload', () => {
+      const g = new ISONGraph('u', false);
+      g.addNode('p', 1);
+      g.addNode('p', 2);
+      g.addEdge('R', ['p', 1], ['p', 2]);
+      const text = g.toIson();
+      expect(ISONGraph.fromIson(text).toIson()).toBe(text);
+    });
+
+    it('no longer lets {A->B, B->A} collide with {A-B}', () => {
+      const d = new ISONGraph('d', true);
+      const u = new ISONGraph('u', false);
+      for (const g of [d, u]) {
+        g.addNode('p', 1);
+        g.addNode('p', 2);
+      }
+      d.addEdge('R', ['p', 1], ['p', 2]);
+      d.addEdge('R', ['p', 2], ['p', 1]);
+      u.addEdge('R', ['p', 1], ['p', 2]);
+      expect(d.toIson()).not.toBe(u.toIson());
+    });
+
+    it('still raises on a duplicate row in a directed graph', () => {
+      const text = 'edges.R\nsource target\n:p:1 :p:2\n:p:1 :p:2\n\nnodes.p\nid\n1\n2';
+      expect(() => ISONGraph.fromIson(text)).toThrow(DuplicateEdgeError);
+    });
+
+    it('honours an explicit directed=true', () => {
+      expect(ISONGraph.fromIson('meta.graph\ndirected\ntrue\n\nnodes.p\nid\n1').directed).toBe(true);
+    });
+  });
+
+  describe('property value domain', () => {
+    it.each([NaN, Infinity, -Infinity])('rejects %s on addNode', (bad) => {
+      expect(() => new ISONGraph().addNode('p', 1, { x: bad })).toThrow(InvalidPropertyValueError);
+    });
+
+    it.each([NaN, Infinity])('rejects %s on addEdge', (bad) => {
+      const g = new ISONGraph();
+      g.addNode('p', 1);
+      g.addNode('p', 2);
+      expect(() => g.addEdge('R', ['p', 1], ['p', 2], { w: bad })).toThrow(InvalidPropertyValueError);
+    });
+
+    it('rejects on updateNode and leaves the node untouched', () => {
+      const g = new ISONGraph();
+      g.addNode('p', 1);
+      expect(() => g.updateNode('p', 1, { x: NaN })).toThrow(InvalidPropertyValueError);
+      expect(g.getNode('p', 1).properties).toEqual({});
+    });
+
+    it('still round-trips finite values', () => {
+      const g = new ISONGraph();
+      g.addNode('p', 1, { a: 1.5, b: -0.0, c: Number.MAX_SAFE_INTEGER });
+      const props = ISONGraph.fromIson(g.toIson()).getNode('p', 1).properties;
+      expect(props.a).toBe(1.5);
+      expect(props.c).toBe(Number.MAX_SAFE_INTEGER);
+    });
   });
 });
 
