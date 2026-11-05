@@ -185,13 +185,35 @@ export class DuplicateEdgeError extends GraphError {
  * round-trip instead of just failing loudly here.
  */
 export class InvalidIdentifierError extends GraphError {
-  constructor(public readonly kind: string, public readonly value: string) {
+  constructor(public readonly kind: string, public readonly value: string, reason?: string) {
     super(
-      `${kind} ${JSON.stringify(value)} is not representable: it must not ` +
-      `be empty or contain whitespace, ':' or '|'` +
-      (/type/i.test(kind) ? `, '"' or '\\'` : '')
+      `${kind} ${JSON.stringify(value)} is not representable: ` + (
+        reason ??
+        `it must not be empty or contain whitespace, ':' or '|'` +
+        (/type/i.test(kind) ? `, '"' or '\\'` : '')
+      )
     );
     this.name = "InvalidIdentifierError";
+  }
+}
+
+/**
+ * A property value cannot survive a serialization round trip. ISON has no
+ * spelling for a non-finite number: NaN and Infinity are written bare and
+ * read back as the *strings* "nan" / "inf", so the value changes type
+ * silently. Refused here, where the mistake is still visible.
+ */
+export class InvalidPropertyValueError extends GraphError {
+  constructor(
+    public readonly kind: string,
+    public readonly propertyName: string,
+    public readonly value: unknown,
+  ) {
+    super(
+      `${kind} ${JSON.stringify(propertyName)} = ${String(value)} cannot be ` +
+      `encoded: a number must be finite (NaN and Infinity are read back as strings).`
+    );
+    this.name = "InvalidPropertyValueError";
   }
 }
 
@@ -336,6 +358,32 @@ export class ISONGraph {
     }
   }
 
+  /** Reject property values that change type on a round trip (non-finite numbers). */
+  private static _checkPropertyValues(kind: string, properties: Properties): void {
+    for (const [name, value] of Object.entries(properties || {})) {
+      if (typeof value === 'number' && !Number.isFinite(value)) {
+        throw new InvalidPropertyValueError(kind, name, value);
+      }
+    }
+  }
+
+  /**
+   * A node id is a string or an integer, nothing else. A reference has no
+   * quoting and no type marker, so ':p:1.5' and ':p:true' have nothing to
+   * resolve against: the id column writes them and every edge to the node
+   * fails on reload. (1.0 is accepted: in JavaScript it *is* the integer 1.)
+   */
+  private static _checkNodeIdType(nodeId: unknown): void {
+    const ok = typeof nodeId === 'string' ||
+      (typeof nodeId === 'number' && Number.isInteger(nodeId));
+    if (!ok) {
+      throw new InvalidIdentifierError(
+        'Node id', String(nodeId),
+        `a node id must be a string or an integer, not ${typeof nodeId === 'number' ? 'a non-integer number' : typeof nodeId}`,
+      );
+    }
+  }
+
   /**
    * Add a node to the graph.
    * @param nodeType Type of node (e.g., 'person', 'company')
@@ -347,8 +395,10 @@ export class ISONGraph {
    */
   addNode(nodeType: string, nodeId: number | string, properties: Properties = {}): Node {
     ISONGraph._checkIdentifier('Node type', nodeType);
+    ISONGraph._checkNodeIdType(nodeId);
     ISONGraph._checkIdentifier('Node id', nodeId);
     ISONGraph._checkPropertyNames('Node property', properties);
+    ISONGraph._checkPropertyValues('Node property', properties);
 
     if (!this._nodes.has(nodeType)) {
       this._nodes.set(nodeType, new Map());
@@ -431,6 +481,8 @@ export class ISONGraph {
 
   /** Update node properties */
   updateNode(nodeType: string, nodeId: number | string, properties: Properties): Node {
+    ISONGraph._checkPropertyNames('Node property', properties);
+    ISONGraph._checkPropertyValues('Node property', properties);
     const node = this.getNode(nodeType, nodeId);
     Object.assign(node.properties, properties);
     return node;
@@ -485,6 +537,7 @@ export class ISONGraph {
   addEdge(relType: string, source: NodeRef, target: NodeRef, properties: Properties = {}): Edge {
     ISONGraph._checkIdentifier('Relationship type', relType);
     ISONGraph._checkPropertyNames('Edge property', properties);
+    ISONGraph._checkPropertyValues('Edge property', properties);
 
     // Validate nodes exist
     if (!this.hasNode(source[0], source[1])) {
@@ -1216,6 +1269,17 @@ export class ISONGraph {
   private _document(): Document {
     const blocks: Block[] = [];
 
+    // Directedness is graph semantics: an undirected graph that reloads as
+    // directed silently changes traversal, degree and cycle results, and
+    // its two mirror rows become two distinct edges. Written only when it
+    // departs from the default so every directed graph keeps its bytes.
+    if (!this.directed) {
+      const meta = new Block("meta", "graph");
+      meta.fields = ["directed"];
+      meta.rows = [{ directed: false }];
+      blocks.push(meta);
+    }
+
     for (const nodeType of Array.from(this._nodes.keys()).sort()) {
       const typeNodes = this._nodes.get(nodeType)!;
       if (typeNodes.size === 0) continue;
@@ -1303,9 +1367,20 @@ export class ISONGraph {
     return [ref.type as string, ref.id];
   }
 
+  /** Read `meta.graph.directed` if the document carries it. */
+  private static _declaredDirected(doc: Document): boolean | undefined {
+    for (const block of doc.blocks) {
+      if (block.kind !== "meta" || block.name !== "graph") continue;
+      for (const row of block.rows) {
+        if ("directed" in row) return Boolean(row.directed);
+      }
+    }
+    return undefined;
+  }
+
   static fromIson(text: string, name: string = "graph"): ISONGraph {
-    const graph = new ISONGraph(name);
     const doc = parse(text);
+    const graph = new ISONGraph(name, ISONGraph._declaredDirected(doc) ?? true);
 
     // Nodes first regardless of block order - the canonical writer sorts
     // blocks by name, which puts 'edges' ahead of 'nodes'.
@@ -1334,6 +1409,11 @@ export class ISONGraph {
             props[k] = v instanceof Reference ? [v.type, v.id] : v;
           }
         }
+        // An undirected graph serializes both an edge and the mirror it
+        // auto-created; re-adding the mirror would collide, so skip what
+        // is already reconstructed. A directed graph still raises on a
+        // genuine duplicate.
+        if (!graph.directed && graph.hasEdge(block.name, source as NodeRef, target as NodeRef)) continue;
         graph.addEdge(block.name, source as NodeRef, target as NodeRef, props);
       }
     }
@@ -1393,28 +1473,29 @@ export class ISONGraph {
   query(pattern: string): NodeRef[] {
     pattern = pattern.trim();
 
+    // A pattern id is unquoted like a reference, so a signed run of digits
+    // spells an integer id and anything else a string.
+    const patternId = (s: string): number | string => /^-?\d+$/.test(s) ? parseInt(s, 10) : s;
+
     // Match: :type:id -[:REL*N]-> *
-    const hopMatch = pattern.match(/:(\w+):(\w+)\s*-\[:(\w+)\*(\d+)\]->\s*\*/);
+    const hopMatch = pattern.match(/:(\w+):(-?\w+)\s*-\[:(\w+)\*(\d+)\]->\s*\*/);
     if (hopMatch) {
       const [, nodeType, nodeIdStr, relType, hopsStr] = hopMatch;
-      const nodeId = /^\d+$/.test(nodeIdStr) ? parseInt(nodeIdStr, 10) : nodeIdStr;
-      return this.multiHop([nodeType, nodeId], relType, parseInt(hopsStr, 10));
+      return this.multiHop([nodeType, patternId(nodeIdStr)], relType, parseInt(hopsStr, 10));
     }
 
     // Match: :type:id -[:REL*N..M]-> *
-    const rangeMatch = pattern.match(/:(\w+):(\w+)\s*-\[:(\w+)\*(\d+)\.\.(\d+)\]->\s*\*/);
+    const rangeMatch = pattern.match(/:(\w+):(-?\w+)\s*-\[:(\w+)\*(\d+)\.\.(\d+)\]->\s*\*/);
     if (rangeMatch) {
       const [, nodeType, nodeIdStr, relType, minStr, maxStr] = rangeMatch;
-      const nodeId = /^\d+$/.test(nodeIdStr) ? parseInt(nodeIdStr, 10) : nodeIdStr;
-      return this.multiHopRange([nodeType, nodeId], relType, parseInt(minStr, 10), parseInt(maxStr, 10));
+      return this.multiHopRange([nodeType, patternId(nodeIdStr)], relType, parseInt(minStr, 10), parseInt(maxStr, 10));
     }
 
     // Match: :type:id -[:REL]-> *
-    const simpleMatch = pattern.match(/:(\w+):(\w+)\s*-\[:(\w+)\]->\s*\*/);
+    const simpleMatch = pattern.match(/:(\w+):(-?\w+)\s*-\[:(\w+)\]->\s*\*/);
     if (simpleMatch) {
       const [, nodeType, nodeIdStr, relType] = simpleMatch;
-      const nodeId = /^\d+$/.test(nodeIdStr) ? parseInt(nodeIdStr, 10) : nodeIdStr;
-      return this.neighbors([nodeType, nodeId], relType);
+      return this.neighbors([nodeType, patternId(nodeIdStr)], relType);
     }
 
     throw new Error(`Invalid query pattern: ${pattern}`);

@@ -37,6 +37,7 @@ Version: 1.4.0
 
 from __future__ import annotations
 
+import math
 import re
 import warnings
 from dataclasses import dataclass, field
@@ -222,13 +223,16 @@ class InvalidIdentifierError(GraphError):
     #: Additionally illegal in a block name, which ISONL cannot quote.
     BLOCK_FORBIDDEN = FORBIDDEN + ('"', '\\')
 
-    def __init__(self, kind: str, value: str):
+    def __init__(self, kind: str, value: str, reason: Optional[str] = None):
         self.kind = kind
         self.value = value
         super().__init__(
-            f"{kind} {value!r} is not representable: it must not be empty "
-            f"or contain whitespace, ':' or '|'"
-            + (", '\"' or '\\'" if 'type' in kind.lower() else "")
+            f"{kind} {value!r} is not representable: " + (
+                reason or (
+                    "it must not be empty or contain whitespace, ':' or '|'"
+                    + (", '\"' or '\\'" if 'type' in kind.lower() else "")
+                )
+            )
         )
 
 
@@ -275,6 +279,25 @@ class InvalidPropertyNameError(GraphError):
         )
 
 
+class InvalidPropertyValueError(GraphError):
+    """A property value cannot survive a serialization round trip.
+
+    ISON has no spelling for a non-finite float: ``nan`` and ``inf`` are
+    written bare and read back as the *strings* ``"nan"`` and ``"inf"``, so
+    the value changes type silently. Refused here, where the mistake is
+    still visible, rather than discovered on reload.
+    """
+
+    def __init__(self, kind: str, name: str, value: Any):
+        self.kind = kind
+        self.name = name
+        self.value = value
+        super().__init__(
+            f"{kind} {name!r} = {value!r} cannot be encoded: a float must "
+            f"be finite (NaN and infinity are read back as strings)."
+        )
+
+
 # =============================================================================
 # Format markers
 # =============================================================================
@@ -293,6 +316,18 @@ _MULTIGRAPH_REJECTION = (
 )
 
 
+#: The canonical decimal spelling of an integer id: an optional sign and
+#: ASCII digits. ``str.isdigit()`` is not this - it misses the sign, so a
+#: negative integer id came back from a reference as the string "-1", and
+#: it accepts Unicode digits that ``int()`` then refuses.
+_INT_TEXT = re.compile(r"-?[0-9]+")
+
+
+def _ref_id(text: str) -> Union[int, str]:
+    """The id an unquoted reference/pattern spells, when no node settles it."""
+    return int(text) if _INT_TEXT.fullmatch(text) else text
+
+
 def _resolve_ref(graph: "ISONGraph", ref: Reference) -> NodeRef:
     """Turn an ISON reference into the NodeRef the graph actually holds.
 
@@ -304,9 +339,18 @@ def _resolve_ref(graph: "ISONGraph", ref: Reference) -> NodeRef:
     """
     if graph.has_node(ref.type, ref.id):
         return (ref.type, ref.id)
-    if ref.id.isdigit() and graph.has_node(ref.type, int(ref.id)):
-        return (ref.type, int(ref.id))
-    return (ref.type, int(ref.id) if ref.id.isdigit() else ref.id)
+    guess = _ref_id(ref.id)
+    return (ref.type, guess)
+
+
+def _declared_directed(doc: Document) -> Optional[bool]:
+    """Read ``meta.graph.directed`` if the document carries it, else None."""
+    for block in doc.blocks:
+        if block.kind == "meta" and block.name == "graph":
+            for row in block.rows:
+                if "directed" in row:
+                    return bool(row["directed"])
+    return None
 
 
 def _reject_if_multigraph(doc: Document) -> None:
@@ -397,6 +441,33 @@ class ISONGraph:
             if not name or name.startswith(prefixes) or any(ch in name for ch in bad):
                 raise InvalidPropertyNameError(kind, name)
 
+    @staticmethod
+    def _check_property_values(kind: str, properties: Dict[str, Any]) -> None:
+        """Reject property values that change type on a round trip.
+
+        Only non-finite floats today; see :class:`InvalidPropertyValueError`.
+        """
+        for name, value in properties.items():
+            if isinstance(value, float) and not math.isfinite(value):
+                raise InvalidPropertyValueError(kind, name, value)
+
+    @staticmethod
+    def _check_node_id_type(node_id: Any) -> None:
+        """A node id is a string or a signed integer, nothing else.
+
+        A reference has no quoting and no type marker, so ``:p:1.5`` and
+        ``:p:True`` have nothing to resolve against: the id column writes
+        them as ``1.5`` / ``true`` and every edge to the node fails on
+        reload. Numeric normalization (``1`` vs ``1.0`` vs ``1e0``) would
+        otherwise leak into reference syntax, so floats are refused even
+        when integral.
+        """
+        if isinstance(node_id, bool) or not isinstance(node_id, (int, str)):
+            raise InvalidIdentifierError(
+                'Node id', repr(node_id),
+                f"a node id must be a str or int, not {type(node_id).__name__}",
+            )
+
     def add_node(
         self,
         node_type: str,
@@ -415,12 +486,16 @@ class ISONGraph:
             The created Node
 
         Raises:
-            InvalidIdentifierError: If node_type or node_id contains ':' or '|'
+            InvalidIdentifierError: If node_type or node_id contains ':' or
+                '|', or node_id is not a str or int
+            InvalidPropertyValueError: If a property is a non-finite float
             DuplicateNodeError: If node already exists
         """
         self._check_identifier('Node type', node_type)
+        self._check_node_id_type(node_id)
         self._check_identifier('Node id', node_id)
         self._check_property_names('Node property', properties)
+        self._check_property_values('Node property', properties)
 
         if node_id in self._nodes[node_type]:
             raise DuplicateNodeError((node_type, node_id))
@@ -429,9 +504,9 @@ class ISONGraph:
         # cannot: both write as ':p:1'. Two nodes whose ids differ only by
         # type are therefore addressable in memory and indistinguishable on
         # the wire, and reloading collapses them - so refuse the second.
-        if isinstance(node_id, str) and node_id.lstrip('-').isdigit():
+        if isinstance(node_id, str) and _INT_TEXT.fullmatch(node_id):
             twin: Union[int, str] = int(node_id)
-        elif isinstance(node_id, int) and not isinstance(node_id, bool):
+        elif isinstance(node_id, int):
             twin = str(node_id)
         else:
             twin = node_id
@@ -500,6 +575,8 @@ class ISONGraph:
         **properties: Any
     ) -> Node:
         """Update node properties"""
+        self._check_property_names('Node property', properties)
+        self._check_property_values('Node property', properties)
         node = self.get_node(node_type, node_id)
         node.properties.update(properties)
         return node
@@ -556,11 +633,13 @@ class ISONGraph:
 
         Raises:
             InvalidIdentifierError: If rel_type contains ':' or '|'
+            InvalidPropertyValueError: If a property is a non-finite float
             NodeNotFoundError: If source or target node doesn't exist
             DuplicateEdgeError: If edge already exists
         """
         self._check_identifier('Relationship type', rel_type)
         self._check_property_names('Edge property', properties)
+        self._check_property_values('Edge property', properties)
 
         # Validate nodes exist
         if not self.has_node(source[0], source[1]):
@@ -1183,6 +1262,19 @@ class ISONGraph:
         """
         blocks = []
 
+        # Directedness is graph semantics, not a presentation choice: an
+        # undirected graph that reloads as directed silently changes
+        # traversal, degree and cycle results, and its two mirror rows
+        # become two distinct edges. Written only when it departs from the
+        # default so that every directed graph keeps the bytes it had.
+        if not self.directed:
+            blocks.append(Block(
+                kind="meta",
+                name="graph",
+                fields=["directed"],
+                rows=[{"directed": False}],
+            ))
+
         for node_type in sorted(self._nodes.keys()):
             nodes = list(self._nodes[node_type].values())
             if not nodes:
@@ -1281,9 +1373,20 @@ class ISONGraph:
         Returns:
             ISONGraph instance
         """
-        graph = cls(name=name)
-        doc = loads(text)
+        return cls._build(loads(text), name)
+
+    @classmethod
+    def from_isonl(cls, text: str, name: str = "graph") -> 'ISONGraph':
+        """Parse graph from ISONL format"""
+        return cls._build(loads_isonl(text), name)
+
+    @classmethod
+    def _build(cls, doc: Document, name: str) -> 'ISONGraph':
+        """Shared block walk for from_ison/from_isonl."""
         _reject_if_multigraph(doc)
+
+        directed = _declared_directed(doc)
+        graph = cls(name=name, directed=True if directed is None else directed)
 
         # Nodes first regardless of block order - the canonical writer sorts
         # blocks by name, which puts 'edges' ahead of 'nodes'.
@@ -1309,39 +1412,12 @@ class ISONGraph:
                     if isinstance(target, Reference):
                         target = _resolve_ref(graph, target)
 
-                    graph.add_edge(rel_type, source, target, **props)
-
-        return graph
-
-    @classmethod
-    def from_isonl(cls, text: str, name: str = "graph") -> 'ISONGraph':
-        """Parse graph from ISONL format"""
-        graph = cls(name=name)
-        doc = loads_isonl(text)
-        _reject_if_multigraph(doc)
-
-        # Same logic as from_ison, nodes first - see there.
-        for block in doc.blocks:
-            if block.kind == "nodes":
-                node_type = block.name
-                for row in block.rows:
-                    node_id = row.get("id")
-                    props = {k: v for k, v in row.items() if k != "id"}
-                    graph.add_node(node_type, node_id, **props)
-
-        for block in doc.blocks:
-            if block.kind == "edges":
-                rel_type = block.name
-                for row in block.rows:
-                    source = row.get("source")
-                    target = row.get("target")
-                    props = {k: v for k, v in row.items() if k not in ("source", "target")}
-
-                    if isinstance(source, Reference):
-                        source = _resolve_ref(graph, source)
-                    if isinstance(target, Reference):
-                        target = _resolve_ref(graph, target)
-
+                    # An undirected graph serializes both an edge and the
+                    # mirror it auto-created; re-adding the mirror would
+                    # collide, so skip anything already reconstructed. A
+                    # directed graph keeps raising on a genuine duplicate.
+                    if not graph.directed and graph.has_edge(rel_type, source, target):
+                        continue
                     graph.add_edge(rel_type, source, target, **props)
 
         return graph
@@ -1516,36 +1592,33 @@ class ISONGraph:
 
         # Match: :type:id -[:REL*N]-> *
         hop_match = re.match(
-            r':(\w+):(\w+)\s*-\[:(\w+)\*(\d+)\]->\s*\*',
+            r':(\w+):(-?\w+)\s*-\[:(\w+)\*(\d+)\]->\s*\*',
             pattern
         )
         if hop_match:
             node_type, node_id, rel_type, hops = hop_match.groups()
-            node_id = int(node_id) if node_id.isdigit() else node_id
-            return self.multi_hop((node_type, node_id), rel_type, int(hops))
+            return self.multi_hop((node_type, _ref_id(node_id)), rel_type, int(hops))
 
         # Match: :type:id -[:REL*N..M]-> *
         range_match = re.match(
-            r':(\w+):(\w+)\s*-\[:(\w+)\*(\d+)\.\.(\d+)\]->\s*\*',
+            r':(\w+):(-?\w+)\s*-\[:(\w+)\*(\d+)\.\.(\d+)\]->\s*\*',
             pattern
         )
         if range_match:
             node_type, node_id, rel_type, min_h, max_h = range_match.groups()
-            node_id = int(node_id) if node_id.isdigit() else node_id
             return self.multi_hop_range(
-                (node_type, node_id), rel_type,
+                (node_type, _ref_id(node_id)), rel_type,
                 int(min_h), int(max_h)
             )
 
         # Match: :type:id -[:REL]-> *
         simple_match = re.match(
-            r':(\w+):(\w+)\s*-\[:(\w+)\]->\s*\*',
+            r':(\w+):(-?\w+)\s*-\[:(\w+)\]->\s*\*',
             pattern
         )
         if simple_match:
             node_type, node_id, rel_type = simple_match.groups()
-            node_id = int(node_id) if node_id.isdigit() else node_id
-            return self.neighbors((node_type, node_id), rel_type)
+            return self.neighbors((node_type, _ref_id(node_id)), rel_type)
 
         raise ValueError(f"Invalid query pattern: {pattern}")
 
@@ -1663,6 +1736,7 @@ __all__ = [
     'DuplicateEdgeError',
     'InvalidIdentifierError',
     'InvalidPropertyNameError',
+    'InvalidPropertyValueError',
 
     # Format markers
     'MULTIGRAPH_FORMAT',

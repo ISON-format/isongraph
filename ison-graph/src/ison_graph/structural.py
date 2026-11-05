@@ -169,6 +169,8 @@ class ProtectedGraph(ISONGraph):
         read-only view.
         """
         _reject_reserved(updates, NODE_RESERVED, "update_node_properties")
+        self._check_property_names('Node property', updates)
+        self._check_property_values('Node property', updates)
         node = self.get_node(node_ref[0], node_ref[1])
         # _props is attached by _seal(); .properties is a read-only view of it.
         cast(Any, node)._props.update(updates)
@@ -188,6 +190,8 @@ class ProtectedGraph(ISONGraph):
         a simple graph.
         """
         _reject_reserved(updates, EDGE_RESERVED, "update_edge_properties")
+        self._check_property_names('Edge property', updates)
+        self._check_property_values('Edge property', updates)
         if key is None:
             edge = self.get_edge(rel_type, source, target)
         else:

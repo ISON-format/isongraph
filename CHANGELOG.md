@@ -6,6 +6,61 @@ share this file and, from 1.3.0, a single version number.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Four ways a graph's meaning changed between `dump` and `load`, found while
+auditing Core as the identity base for ISONGraphExt. Each is fixed in
+Python, JavaScript and TypeScript, with the same tests in all three. A
+directed graph's serialized bytes are unchanged, so the cross-port golden
+still holds; only the cases that were already broken produce different
+output.
+
+### Fixed
+
+- **A negative integer node id did not survive reload.** `:p:-1` was
+  resolved with `str.isdigit()`, which has no notion of a sign, so the
+  reference came back as the string `"-1"`, no such node existed, and
+  `from_ison`/`from_isonl` raised `NodeNotFoundError` on every edge to it -
+  in `ISONGraph`, `MultiGraph` and the `query()` pattern parser alike.
+  References and patterns now read `-?[0-9]+` as an integer, and resolve
+  against the loaded node table first, so a *string* id `"-1"` is still
+  found as a string. JS and TS already handled the sign; they gain the
+  pattern-parser fix and the tests.
+
+- **An undirected graph reloaded as directed.** The simple graph wrote no
+  `meta.graph` block, so `directed=False` was lost on the wire and its two
+  mirror rows came back as two independent directed edges. Worse,
+  `{A->B, B->A}` directed and `{A-B}` undirected serialized to identical
+  bytes. An undirected `ISONGraph` now writes `meta.graph` with
+  `directed false`, exactly as `MultiGraph` already did, and reads it back,
+  skipping the mirror row it has already reconstructed. Directed graphs
+  write nothing new.
+
+### Changed
+
+- **Node ids are strings or signed integers, nothing else.** `1.5`, `True`
+  and `None` were accepted as ids, written as `1.5` / `true` / `null`, and
+  then no edge to them resolved on reload. They are now refused at
+  `add_node` with `InvalidIdentifierError`. In JS/TS, `1.0` *is* the
+  integer `1` and stays accepted; booleans, `null`, `undefined` and
+  non-integer numbers are refused.
+
+- **Non-finite floats are refused as property values.** `float('nan')` and
+  `inf` have no ISON spelling: they were written bare and read back as the
+  strings `"nan"` and `"inf"`. `add_node`, `add_edge`, `update_node` and
+  the `ProtectedGraph` property updaters now raise the new
+  `InvalidPropertyValueError` (a `GraphError`) before the value enters the
+  graph. `update_node` also validates property *names* now, closing a gap
+  that let a dotted or `#`-prefixed name in through the back door.
+
+### Not yet in Rust, C# and C++
+
+Those ports store every node id as a string, so the negative-id and
+id-type changes have no equivalent there yet, and they do not emit
+`meta.graph` for an undirected graph. An undirected graph written by
+Python/JS/TS and read by Rust/C#/C++ loads as directed, as it did before
+this change. Aligning them is the next parity item.
+
 ## [1.4.0] — 2026-09-05
 
 Rust, C# and C++ change their property API. Those three stored every value
