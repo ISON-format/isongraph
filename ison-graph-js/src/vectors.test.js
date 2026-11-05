@@ -61,6 +61,9 @@ describe('Core Conformance Corpus (js)', () => {
         expect(out).toBe(read(row.canonical));
         expect(emit(ISONGraph.fromIson(out))).toBe(out);
       } else if (expectation === 'pass:lossy') {
+        // The loss must be real: if the port now preserves the input, the
+        // cell is stale and should become 'pass'.
+        expect(out, 'pass:lossy but output equals the file - promote the cell to pass').not.toBe(text);
         expect(emit(ISONGraph.fromIson(out))).toBe(out);
       } else {
         throw new Error(`unknown expectation ${JSON.stringify(expectation)} for ${PORT}`);

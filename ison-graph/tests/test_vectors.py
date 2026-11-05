@@ -139,6 +139,9 @@ def test_vector(row):
         assert out == _read(row["canonical"])
         assert _emit(ISONGraph.from_ison(out)) == out
     elif expectation == "pass:lossy":
+        # The loss must be real: if the port now preserves the input, the
+        # cell is stale and should become 'pass'.
+        assert out != text, "pass:lossy but output equals the file - promote the cell to pass"
         assert _emit(ISONGraph.from_ison(out)) == out
     else:
         pytest.fail(f"unknown expectation {expectation!r} for {PORT}")

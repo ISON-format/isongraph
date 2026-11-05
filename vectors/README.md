@@ -75,8 +75,9 @@ only meaningful for a green commit.
 
 | vector | ports | observed | spec says | status |
 |---|---|---|---|---|
-| structure/multigraph-document | ts, js | loads the document and treats `key` as an edge property | Python, Rust, C# and C++ refuse an `ison-graph-multigraph-v1` document | open - CORE_BLOCKING_DIVERGENCE |
+| structure/multigraph-document | ts, js | loads the document, treats `key` as an edge property, and drops the whole `meta.graph` block on output - so a TS/JS round trip turns a multigraph document into a simple-graph document that Python then accepts | Python, Rust, C# and C++ refuse an `ison-graph-multigraph-v1` document | open - CORE_BLOCKING_DIVERGENCE |
 | values/nonfinite-as-text | ts, js | writer emits the strings `nan` / `inf` bare | ison-py quotes them (`"nan"`), so the same graph has two canonical byte forms | open - ISONCS writer divergence, needs an ison-ts/ison-js decision |
 | ids/int64-extremes | ts, js | ids beyond 2^53 are read as binary64 and re-emitted rounded | 13-SEMANTIC-2 §1.2 JS binding rule: such input must arrive as BigInt or an exact integer token | known limitation - pass:lossy |
 | values/int64-extreme-values | ts, js | as above for property values | as above | known limitation - pass:lossy |
+| values/int-beyond-int64-inexact | ts, js | `100000000000000000001` is read as binary64 and re-emitted as `100000000000000000000`; the sibling `values/int-beyond-int64` (10^20) is `pass` only because that literal is exactly representable | as above - integers beyond 2^53 are not preserved unless exactly representable | known limitation - pass:lossy |
 | values/int-vs-integral-float | ts, js | `1.0` is re-emitted as `1` | CHANGELOG 1.4.0 known limitation; Semantic/2 treats both as INT64(1) | known limitation - pass:lossy |
