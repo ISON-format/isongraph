@@ -1,0 +1,11 @@
+edges.R
+key source target
+0 :p:1 :p:1
+
+meta.graph
+directed format version
+true ison-graph-multigraph-v1 1
+
+nodes.p
+id
+1
