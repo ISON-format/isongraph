@@ -6,6 +6,23 @@ share this file and, from 1.3.0, a single version number.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Core Conformance Corpus** (`vectors/`): 31 executable ISON/ISONL
+  documents with a per-port expectation each, run by the Python, TypeScript
+  and JavaScript suites on every push. One golden fixture used to be the only
+  thing saying the ports agree; the corpus says it per document, and records
+  where they still do not (`vectors/README.md` § Findings): TS/JS accept a
+  MultiGraph document the other four ports refuse, ison-ts/ison-js write the
+  string `nan` bare where ison-py quotes it, and ids or values beyond 2^53
+  come back rounded in TS/JS. Rust, C# and C++ columns are `todo` until each
+  gets a runner - admission is all-or-nothing per port.
+- `scripts/corpus_digest.py` and `scripts/corpus_receipt.py`, which produce
+  what ISONGraphExt pins: the corpus digest and a per-port Core Conformance
+  Receipt with a derived posture.
+
 ## [1.4.1] — 2026-11-05
 
 Four ways a graph's meaning changed between `dump` and `load`, found while
