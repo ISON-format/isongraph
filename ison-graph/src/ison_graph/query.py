@@ -38,7 +38,7 @@ Usage:
         .execute())
 
 Author: Mahesh Vaikri
-Version: 1.4.0
+Version: 1.4.1
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ except ImportError:
     # Fallback for standalone testing
     from ison_graph import ISONGraph, Node, Edge, NodeRef, Direction, Path
 
-__version__ = "1.4.0"
+__version__ = "1.4.1"
 __author__ = "Mahesh Vaikri"
 
 

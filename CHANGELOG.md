@@ -6,7 +6,7 @@ share this file and, from 1.3.0, a single version number.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.4.1] — 2026-11-05
 
 Four ways a graph's meaning changed between `dump` and `load`, found while
 auditing Core as the identity base for ISONGraphExt. Each is fixed in
