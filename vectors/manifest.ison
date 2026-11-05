@@ -32,3 +32,6 @@ structure/self-loop structure/self-loop.ison identifiable null true 1 1 null nul
 structure/multigraph-document structure/multigraph-document.ison out_of_domain MULTIGRAPH_DOCUMENT true 1 1 null null "reject:ValueError" todo todo todo todo todo
 structure/unknown-block-kind structure/unknown-block-kind.ison identifiable null true 1 0 structure/unknown-block-kind.canonical.ison null "pass:canonicalized" todo todo todo todo todo
 structure/empty structure/empty.ison identifiable null true 0 0 null null pass todo todo todo todo todo
+serialization/non-canonical-order serialization/non-canonical-order.ison identifiable null true 2 1 serialization/non-canonical-order.canonical.ison null "pass:canonicalized" todo todo todo todo todo
+serialization/undirected-basic-isonl serialization/undirected-basic.isonl identifiable null false 2 2 structure/undirected-basic.ison null "pass:canonicalized" todo todo todo todo todo
+serialization/negative-int-isonl serialization/negative-int.isonl identifiable null true 2 2 ids/negative-int.ison null "pass:canonicalized" todo todo todo todo todo

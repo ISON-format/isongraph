@@ -1,0 +1,4 @@
+edges.R|source target|:p:-1 :p:2
+edges.R|source target|:p:2 :p:-1
+nodes.p|id|-1
+nodes.p|id|2
