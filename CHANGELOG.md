@@ -24,6 +24,26 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `scripts/corpus_digest.py` and `scripts/corpus_receipt.py`, which produce
   what ISONGraphExt pins: the corpus digest and a per-port Core Conformance
   Receipt with a derived posture.
+- **Semantic golden corpus** (`vectors/semantic/`): 42 executable vectors,
+  7 relations and 7 construction-time conditions for the draft graph-identity
+  contract (ISONGraph-Semantic/2), run by the Python, TypeScript and
+  JavaScript suites. Each vector states whether the document has a semantic
+  identity (`identifiable` / `out_of_domain` with a reason), its normal form
+  as a plain-text listing, and what each port does with it. No digest values
+  yet: the digest encoding is not frozen, so `digest` reads
+  `pending-G-ID-freeze` and the corpus is pinned by
+  `python scripts/corpus_digest.py vectors/semantic`. It adds no behaviour to
+  any port; it records what they do. New findings, each in
+  `vectors/semantic/README.md`: ids `7` and `"007"` are refused as twins
+  although they are different identities; floats that print with an exponent
+  (`1e-7`, `1e16`) are written as exponent tokens and read back as strings; a
+  conflicting undirected mirror row is skipped silently by every loader;
+  list, dict and over-int64 property values are accepted and then rewritten
+  as text in Python/JS or fail at `to_ison` in TS; a lone surrogate is
+  accepted and cannot be encoded.
+- `scripts/corpus_digest.py` leaves `semantic/` out of the Core corpus digest
+  and `scripts/corpus_receipt.py` leaves it out of `corpus_commit`, so the six
+  Core Conformance Receipts are unchanged by it.
 
 ## [1.4.1] — 2026-11-05
 
