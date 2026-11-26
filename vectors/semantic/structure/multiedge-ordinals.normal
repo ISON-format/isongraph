@@ -1,0 +1,7 @@
+header directed=true multigraph=true
+node p:INT64(1) {}
+node p:INT64(2) {}
+edge p:INT64(1) R p:INT64(2) ordinal=STRING("0") {w=STRING("a")}
+edge p:INT64(1) R p:INT64(2) ordinal=STRING("1") {w=STRING("b")}
+edge p:INT64(1) R p:INT64(2) ordinal=STRING("10") {w=STRING("c")}
+edge p:INT64(1) R p:INT64(2) ordinal=STRING("2") {w=STRING("d")}

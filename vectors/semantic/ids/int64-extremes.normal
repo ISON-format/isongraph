@@ -1,0 +1,4 @@
+header directed=true multigraph=false
+node p:INT64(-9223372036854775808) {}
+node p:INT64(9223372036854775807) {}
+edge p:INT64(-9223372036854775808) R p:INT64(9223372036854775807) ordinal=STRING("0") {}

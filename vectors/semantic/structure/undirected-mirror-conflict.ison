@@ -1,0 +1,13 @@
+edges.R
+source target w
+:p:1 :p:2 1
+:p:2 :p:1 2
+
+meta.graph
+directed
+false
+
+nodes.p
+id
+1
+2

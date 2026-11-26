@@ -1,0 +1,4 @@
+header directed=true multigraph=false
+node p:INT64(1) {x=FLOAT64(0x3FF8000000000000)}
+node p:INT64(2) {x=FLOAT64(0x4002000000000000)}
+node p:INT64(3) {x=FLOAT64(0x3FB999999999999A)}

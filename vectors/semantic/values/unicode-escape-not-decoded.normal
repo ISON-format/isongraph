@@ -1,0 +1,3 @@
+header directed=true multigraph=false
+node p:INT64(1) {x=STRING("ud800")}
+node p:INT64(2) {x=STRING("u00e9")}

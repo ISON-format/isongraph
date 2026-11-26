@@ -92,7 +92,7 @@ def build_receipt(root: Path, port: str) -> dict:
         "core_commit": git(root, "rev-parse", "HEAD"),
         "semantic_spec": meta["semantic_spec"],
         "corpus_version": meta["version"],
-        "corpus_commit": git(root, "log", "-1", "--format=%H", "--", "vectors") or git(root, "rev-parse", "HEAD"),
+        "corpus_commit": git(root, "log", "-1", "--format=%H", "--", "vectors", ":(exclude)vectors/semantic") or git(root, "rev-parse", "HEAD"),
         "corpus_digest": corpus_digest(root / "vectors"),
         "port": port,
         "port_version": port_version(root, port),

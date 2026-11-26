@@ -1,0 +1,68 @@
+meta.corpus
+version semantic_spec kind
+1 "ISONGraph-Semantic/2-draft" semantic
+
+table.vectors
+id file semantic reason directed nodes edges loader canonical normal digest python ts js rust cs cpp
+ids/int-positive ids/int-positive.ison identifiable null true 2 1 graph null ids/int-positive.normal pending-G-ID-freeze pass pass pass todo todo todo
+ids/int-negative ids/int-negative.ison identifiable null true 2 2 graph null ids/int-negative.normal pending-G-ID-freeze pass pass pass todo todo todo
+ids/string-numeric ids/string-numeric.ison identifiable null true 2 1 graph null ids/string-numeric.normal pending-G-ID-freeze pass pass pass todo todo todo
+ids/string-negative ids/string-negative.ison identifiable null true 2 1 graph null ids/string-negative.normal pending-G-ID-freeze pass pass pass todo todo todo
+ids/string-leading-zero ids/string-leading-zero.ison identifiable null true 2 1 graph null ids/string-leading-zero.normal pending-G-ID-freeze pass pass pass todo todo todo
+ids/leading-zero-not-twin ids/leading-zero-not-twin.ison identifiable null true 0 0 graph null ids/leading-zero-not-twin.normal pending-G-ID-freeze "reject:DuplicateNodeError" "reject:DuplicateNodeError" "reject:DuplicateNodeError" todo todo todo
+ids/plus-sign-text ids/plus-sign-text.ison identifiable null true 2 1 graph ids/plus-sign-text.canonical.ison ids/plus-sign-text.normal pending-G-ID-freeze "pass:canonicalized" pass "pass:canonicalized" todo todo todo
+ids/int64-extremes ids/int64-extremes.ison identifiable null true 2 1 graph null ids/int64-extremes.normal pending-G-ID-freeze pass "pass:lossy" "pass:lossy" todo todo todo
+ids/twin-int-string ids/twin-int-string.ison out_of_domain AMBIGUOUS_NODE_REFERENCE true 0 0 graph null null none "reject:DuplicateNodeError" "reject:DuplicateNodeError" "reject:DuplicateNodeError" todo todo todo
+ids/twin-negative ids/twin-negative.ison out_of_domain AMBIGUOUS_NODE_REFERENCE true 0 0 graph null null none "reject:DuplicateNodeError" "reject:DuplicateNodeError" "reject:DuplicateNodeError" todo todo todo
+ids/float-id ids/float-id.ison out_of_domain INVALID_NODE_ID_TYPE true 0 0 graph null null none "reject:InvalidIdentifierError" "reject:InvalidIdentifierError" "reject:InvalidIdentifierError" todo todo todo
+ids/bool-id ids/bool-id.ison out_of_domain INVALID_NODE_ID_TYPE true 0 0 graph null null none "reject:InvalidIdentifierError" "reject:InvalidIdentifierError" "reject:InvalidIdentifierError" todo todo todo
+values/int-float-collapse values/int-float-collapse.ison identifiable null true 3 0 graph values/int-float-collapse.canonical.ison values/int-float-collapse.normal pending-G-ID-freeze "pass:canonicalized" "pass:lossy" "pass:lossy" todo todo todo
+values/zero-forms values/zero-forms.ison identifiable null true 3 0 graph null values/zero-forms.normal pending-G-ID-freeze pass "pass:lossy" "pass:lossy" todo todo todo
+values/float-fractional values/float-fractional.ison identifiable null true 3 0 graph null values/float-fractional.normal pending-G-ID-freeze pass pass pass todo todo todo
+values/int64-extreme-values values/int64-extreme-values.ison identifiable null true 2 0 graph null values/int64-extreme-values.normal pending-G-ID-freeze pass "pass:lossy" "pass:lossy" todo todo todo
+values/int-beyond-int64 values/int-beyond-int64.ison out_of_domain INTEGER_OUT_OF_INT64 true 1 0 graph null null none pass pass pass todo todo todo
+values/int-just-beyond-int64 values/int-just-beyond-int64.ison out_of_domain INTEGER_OUT_OF_INT64 true 2 0 graph null null none pass "pass:lossy" "pass:lossy" todo todo todo
+values/integral-float-outside-int64 values/integral-float-outside-int64.ison out_of_domain INTEGRAL_FLOAT_OUT_OF_INT64 true 3 0 graph null null none "defect:unstable" "pass:lossy" "pass:lossy" todo todo todo
+values/exponent-text values/exponent-text.ison identifiable null true 3 0 graph values/exponent-text.canonical.ison values/exponent-text.normal pending-G-ID-freeze "pass:canonicalized" pass "pass:canonicalized" todo todo todo
+values/nonfinite-as-text values/nonfinite-as-text.ison identifiable null true 5 0 graph values/nonfinite-as-text.canonical.ison values/nonfinite-as-text.normal pending-G-ID-freeze "pass:canonicalized" pass pass todo todo todo
+values/null-elision values/null-elision.ison identifiable null true 2 0 graph null values/null-elision.normal pending-G-ID-freeze pass pass pass todo todo todo
+values/nfd-vs-nfc values/nfd-vs-nfc.ison identifiable null true 2 0 graph null values/nfd-vs-nfc.normal pending-G-ID-freeze pass pass pass todo todo todo
+values/bool-vs-int-vs-string values/bool-vs-int-vs-string.ison identifiable null true 4 0 graph null values/bool-vs-int-vs-string.normal pending-G-ID-freeze pass pass pass todo todo todo
+values/json-text-is-string values/json-text-is-string.ison identifiable null true 2 0 graph null values/json-text-is-string.normal pending-G-ID-freeze pass pass pass todo todo todo
+values/unicode-escape-not-decoded values/unicode-escape-not-decoded.ison identifiable null true 2 0 graph values/unicode-escape-not-decoded.canonical.ison values/unicode-escape-not-decoded.normal pending-G-ID-freeze "pass:canonicalized" "pass:canonicalized" "pass:canonicalized" todo todo todo
+structure/directed-two-way structure/directed-two-way.ison identifiable null true 2 2 graph null structure/directed-two-way.normal pending-G-ID-freeze pass pass pass todo todo todo
+structure/undirected-basic structure/undirected-basic.ison identifiable null false 2 2 graph null structure/undirected-basic.normal pending-G-ID-freeze pass pass pass todo todo todo
+structure/undirected-single-row structure/undirected-single-row.ison identifiable null false 2 2 graph structure/undirected-basic.ison structure/undirected-single-row.normal pending-G-ID-freeze "pass:canonicalized" "pass:canonicalized" "pass:canonicalized" todo todo todo
+structure/undirected-mirror-conflict structure/undirected-mirror-conflict.ison out_of_domain UNDIRECTED_EDGE_CONFLICT false 2 2 graph structure/undirected-basic.ison null none "pass:canonicalized" "pass:canonicalized" "pass:canonicalized" todo todo todo
+structure/undirected-three-records structure/undirected-three-records.ison out_of_domain UNDIRECTED_EDGE_CONFLICT false 2 2 graph structure/undirected-basic.ison null none "pass:canonicalized" "pass:canonicalized" "pass:canonicalized" todo todo todo
+structure/undirected-self-loop structure/undirected-self-loop.ison identifiable null false 1 1 graph null structure/undirected-self-loop.normal pending-G-ID-freeze pass pass pass todo todo todo
+structure/simple-edge-ordinal structure/simple-edge-ordinal.ison identifiable null true 2 1 graph null structure/simple-edge-ordinal.normal pending-G-ID-freeze pass pass pass todo todo todo
+structure/multiedge-ordinals structure/multiedge-ordinals.ison identifiable null true 2 4 multigraph null structure/multiedge-ordinals.normal pending-G-ID-freeze pass "reject:DuplicateEdgeError" "reject:DuplicateEdgeError" todo todo todo
+structure/header-explicit-true structure/header-explicit-true.ison identifiable null true 2 1 graph structure/header-absent.ison structure/header-explicit-true.normal pending-G-ID-freeze "pass:canonicalized" "pass:canonicalized" "pass:canonicalized" todo todo todo
+structure/header-absent structure/header-absent.ison identifiable null true 2 1 graph null structure/header-absent.normal pending-G-ID-freeze pass pass pass todo todo todo
+structure/self-loop structure/self-loop.ison identifiable null true 1 1 graph null structure/self-loop.normal pending-G-ID-freeze pass pass pass todo todo todo
+structure/non-canonical-order structure/non-canonical-order.ison identifiable null true 2 1 graph structure/non-canonical-order.canonical.ison structure/non-canonical-order.normal pending-G-ID-freeze "pass:canonicalized" "pass:canonicalized" "pass:canonicalized" todo todo todo
+receipts/int-float-ison-py receipts/int-float.ison-py.ison identifiable null true 2 0 graph null receipts/int-float.ison-py.normal pending-G-ID-freeze pass "pass:lossy" "pass:lossy" todo todo todo
+receipts/int-float-ison-js receipts/int-float.ison-js.ison identifiable null true 2 0 graph null receipts/int-float.ison-js.normal pending-G-ID-freeze pass pass pass todo todo todo
+receipts/nan-text-ison-py receipts/nan-text.ison-py.ison identifiable null true 1 0 graph receipts/nan-text.ison-js.ison receipts/nan-text.ison-py.normal pending-G-ID-freeze pass "pass:canonicalized" "pass:canonicalized" todo todo todo
+receipts/nan-text-ison-js receipts/nan-text.ison-js.ison identifiable null true 1 0 graph receipts/nan-text.ison-py.ison receipts/nan-text.ison-js.normal pending-G-ID-freeze "pass:canonicalized" pass pass todo todo todo
+
+table.relations
+id a b semantic artifact
+rel/directed-vs-undirected structure/directed-two-way structure/undirected-basic differ differ
+rel/int-vs-string-id ids/int-positive ids/string-numeric differ differ
+rel/int-vs-string-id-negative ids/int-negative ids/string-negative differ differ
+rel/undirected-single-row-vs-mirrors structure/undirected-single-row structure/undirected-basic equal differ
+rel/header-explicit-vs-absent structure/header-explicit-true structure/header-absent equal differ
+rel/two-writers-int-float receipts/int-float-ison-py receipts/int-float-ison-js equal differ
+rel/two-writers-nan-text receipts/nan-text-ison-py receipts/nan-text-ison-js equal differ
+
+table.api
+id op semantic reason python ts js rust cs cpp
+api/nan-property nan-property out_of_domain NONFINITE_FLOAT "reject:InvalidPropertyValueError" "reject:InvalidPropertyValueError" "reject:InvalidPropertyValueError" todo todo todo
+api/inf-property inf-property out_of_domain NONFINITE_FLOAT "reject:InvalidPropertyValueError" "reject:InvalidPropertyValueError" "reject:InvalidPropertyValueError" todo todo todo
+api/lone-surrogate-property lone-surrogate-property out_of_domain INVALID_UNICODE_SCALAR "accept:unencodable" "accept:unencodable" "accept:unencodable" todo todo todo
+api/list-property list-property out_of_domain CONTAINER_PROPERTY "accept:retyped" "accept:unwritable:TypeError" "accept:retyped" todo todo todo
+api/dict-property dict-property out_of_domain CONTAINER_PROPERTY "accept:retyped" "accept:unwritable:TypeError" "accept:retyped" todo todo todo
+api/int-beyond-int64-property int-beyond-int64-property out_of_domain INTEGER_OUT_OF_INT64 accept "accept:unwritable:TypeError" "accept:retyped" todo todo todo
+api/float-exponent-property float-exponent-property identifiable null "accept:retyped" "accept:retyped" "accept:retyped" todo todo todo
