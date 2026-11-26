@@ -1,0 +1,5 @@
+header directed=true multigraph=false
+node p:INT64(1) {x=BOOL(true)}
+node p:INT64(2) {x=INT64(1)}
+node p:INT64(3) {x=STRING("true")}
+node p:INT64(4) {x=STRING("1")}

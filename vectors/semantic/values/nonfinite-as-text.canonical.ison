@@ -1,0 +1,7 @@
+nodes.p
+id x
+1 "nan"
+2 "NaN"
+3 "inf"
+4 "-inf"
+5 "Infinity"

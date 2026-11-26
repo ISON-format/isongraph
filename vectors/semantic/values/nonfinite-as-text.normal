@@ -1,0 +1,6 @@
+header directed=true multigraph=false
+node p:INT64(1) {x=STRING("nan")}
+node p:INT64(2) {x=STRING("NaN")}
+node p:INT64(3) {x=STRING("inf")}
+node p:INT64(4) {x=STRING("-inf")}
+node p:INT64(5) {x=STRING("Infinity")}

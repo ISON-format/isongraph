@@ -1,0 +1,3 @@
+header directed=true multigraph=false
+node p:INT64(1) {}
+edge p:INT64(1) R p:INT64(1) ordinal=STRING("0") {}

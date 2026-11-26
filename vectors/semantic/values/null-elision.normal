@@ -1,0 +1,3 @@
+header directed=true multigraph=false
+node p:INT64(1) {}
+node p:INT64(2) {x=INT64(1)}
