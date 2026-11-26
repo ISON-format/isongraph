@@ -60,6 +60,19 @@ def test_real_corpus_digest_is_stable_across_two_calls():
     assert d1 == d2 and len(d1) == 64
 
 
+def test_digest_ignores_the_semantic_subcorpus(tmp_path):
+    core = _make(tmp_path / "core", {"a.ison": b"1\n"})
+    both = _make(tmp_path / "both", {"a.ison": b"1\n", "semantic/manifest.ison": b"x\n"})
+    assert digest_mod.corpus_digest(core) == digest_mod.corpus_digest(both)
+
+
+def test_semantic_subcorpus_has_its_own_digest(tmp_path):
+    root = _make(tmp_path, {"a.ison": b"1\n", "semantic/manifest.ison": b"x\n"})
+    own = digest_mod.corpus_digest(root / "semantic")
+    expected = hashlib.sha256(b"manifest.ison\0" + b"x\n" + b"\0").hexdigest()
+    assert own == expected and own != digest_mod.corpus_digest(root)
+
+
 receipt_mod = _import("corpus_receipt")
 
 
