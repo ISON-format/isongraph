@@ -39,6 +39,14 @@ Benchmarks live in `benchmark/`; they call the DeepSeek API — set the `DEEPSEE
 
 Feature parity matters: if you add a feature to one language implementation, please open an issue so it can be tracked for the others.
 
+## Design proposals
+
+A change that breaks a public API, or that the six ports have to agree on, is
+proposed as a short RFC in `docs/rfc/` before it is implemented, so the
+decision and the evidence are on record. Current proposals:
+
+- [RFC 0001: INT64 | STRING node ids in the Rust, C# and C++ ports](docs/rfc/0001-int64-string-ids.md) (draft)
+
 ## Releases
 
 From 1.3.0 the six ports share one version number, so a release is **one
